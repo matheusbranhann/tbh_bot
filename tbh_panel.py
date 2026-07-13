@@ -212,7 +212,7 @@ class Panel:
                 ("God Mode",self.v_god,"god","player takes no damage"),
                 ("🎁 Auto-box",self.v_autobox,"autobox","opens boxes as they appear"),
                 ("📦 Auto-stash",self.v_autoitem,"autoitem","sends every item to the stash instantly"),
-                ("⚗️ Auto-fuse",self.v_autosynth,"autosynth","open the Cube at Lv.65~80 → fuses 9 ONLY when the result is Lv.65+")]):
+                ("⚗️ Auto-fuse",self.v_autosynth,"autosynth","⚠ ONLY works with the CUBE OPEN at Lv.65~80 → fuses 9 same-grade (result Lv.65+)")]):
                 # Auto-fuse: real, legit synthesis (no forging). SAFE 65-80 mode: the bot only full-fills
                 # (ipu, which respects the Cube's Lv dropdown) and fuses (imx) IF the result level >= 65 —
                 # it never fuses low-level junk. Set the Cube type + "Lv.65~80" yourself; the bot won't
@@ -222,7 +222,8 @@ class Panel:
                           command=lambda k=key,v=var:self._set_want(k,v),font=F(13,"bold"),
                           progress_color=ACC,button_color="#e5e5e5",button_hover_color="#fff",
                           fg_color=CARD2,text_color=FG).pack(side="left")
-            ctk.CTkLabel(cell,text=desc,text_color=SUBTLE,font=F(10)).pack(side="left",padx=(6,0))
+            dcolor=AMBER if key=="autosynth" else SUBTLE   # auto-fuse: aviso do cubo aberto em destaque
+            ctk.CTkLabel(cell,text=desc,text_color=dcolor,font=F(10,"bold" if key=="autosynth" else "normal")).pack(side="left",padx=(6,0))
         # stats
         c2=self.card(wrap," STATS  ·  tick, type a value (re-applies itself) "); c2.pack(fill="x",padx=6,pady=6)
         tb=ctk.CTkFrame(c2,fg_color="transparent"); tb.pack(fill="x",padx=14,pady=(2,4))
@@ -286,7 +287,7 @@ class Panel:
             if not self.v_autobox.get():
                 self.v_autobox.set(True); self.eng.want["autobox"]=True     # box: open boxes -> generate items
             self.eng.want["synth_lvlgate"]=True
-            self.log("Auto-box + Auto-stash + Auto-fuse enabled. Keep the Cube open; the bot cycles types itself.")
+            self.log("⚠ Auto-fuse needs the CUBE OPEN at Lv.65~80 (it won't fuse with the cube closed). Switch the type (Gear/Material/Accessory) yourself.")
         self._upd_active()
     def sync_stats(self):
         d={}

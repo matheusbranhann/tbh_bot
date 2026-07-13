@@ -1069,6 +1069,7 @@ class Engine:
                 if W.get("autobox") and self._do_autobox(): did=True          # 1) caixa: prioridade maxima
                 if (W.get("autoitem") or W.get("autosynth")) and self._do_stash(used): did=True   # 2) stash
                 if W.get("autosynth") and not did and self._do_synth(): did=True # 3) fuse (so se nao houve caixa/stash pendente)
+                if W.get("autoitem") and not did and self._sort_grade_step(2): did=True  # 4) ordena o stash por grade (so quando ocioso)
                 time.sleep(0.12 if did else 0.5)
             except Exception: time.sleep(0.3)
     def _do_autobox(self):
@@ -1141,6 +1142,49 @@ class Engine:
             self.log("⚗️ Synthesis: fused 9 (result Lv.%d)."%maxrl)
             return True
         return False
+    def _grade_of_key(self, key):
+        """Grade REAL do item (via izb/ItemInfoData, cacheado). Fallback: digito da key."""
+        if not key: return 99
+        info=self._item_info(key)
+        return info[1] if (info and info[1] is not None) else (key//1000)%10
+    def _sort_grade_step(self, slottype):
+        """UM passo de ordenacao por grade do container (2=stash / 1=inventario): conserta a 1a
+        posicao fora de ordem (<=2 moves STASH->STASH via iw, funcao LEGIT). Amortizado no _auto_loop
+        (so quando ocioso) -> nao bloqueia o auto-box. Retorna True se fez um move; False = ja ordenado.
+        Ordena common->uncommon->rare->... packed nos slots de menor indice."""
+        try:
+            ra=self._ra()
+            if not ra: return False
+            bau=self._resolve_bau(); PSD=self.u64(bau+self.sym.get("inv_psd_off",INV_PSD_OFF))
+            if not self.vptr(PSD): return False
+            master=self.u64(PSD+self.sym.get("inv_list_off",INV_LIST_OFF)); marr=self.u64(master+0x10); msz=self.u32(master+0x18)
+            u2k={}
+            for i in range(min(msz or 0,5000)):
+                o=self.u64(marr+0x20+i*8)
+                if o: u2k[self.u64(o+0x18)]=self.u32(o+0x10)
+            off=self.sym.get("stash_off",0x90) if slottype==2 else self.sym.get("inv_slots_off",0x88)
+            lp=self.u64(PSD+off); arr=self.u64(lp+0x10); sz=self.u32(lp+0x18) or 0
+            uid={}; grade={}; unlocked=[]
+            for i in range(min(sz,400)):
+                o=self.u64(arr+0x20+i*8)
+                if not o or not (self.rb(o+0x20,1) or b"\x00")[0]: continue   # so slots desbloqueados
+                unlocked.append(i); u=self.u64(o+0x18)
+                if u: uid[i]=u; grade[i]=self._grade_of_key(u2k.get(u,0))
+            if len(uid)<2: return False
+            want=[uid[s] for s in sorted(uid.keys(), key=lambda s:grade[s])]    # uids na ordem de grade
+            targets=sorted(unlocked)[:len(uid)]                                 # os n menores slots
+            empties=[i for i in unlocked if i not in uid]
+            for idx,p in enumerate(targets):                                    # acha a 1a posicao errada
+                if uid.get(p)==want[idx]: continue
+                src=next((s for s,u in uid.items() if u==want[idx]), None)
+                if src is None: return False
+                if p in uid:                                                    # p ocupado por item errado -> tira pra um empty
+                    if not empties: return False
+                    self._dispatch(2, argP=ra, req=(slottype, p, slottype, empties[0], 1)); time.sleep(0.28)
+                self._dispatch(2, argP=ra, req=(slottype, src, slottype, p, 1)); time.sleep(0.28)
+                return True
+            return False
+        except Exception: return False
     def _inv_slot_has(self, idx, uid):
         """True se o slot de inventario 'idx' ainda contem o item 'uid' (pre-move check)."""
         try:
