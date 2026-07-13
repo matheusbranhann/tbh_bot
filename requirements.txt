@@ -1,10 +1,18 @@
+# >>> Modo facil: de DUPLO-CLIQUE em INSTALL.bat (instala tudo sozinho). <<<
+# Este arquivo lista TUDO junto so para referencia. O INSTALL.bat usa os
+# arquivos separados requirements-core.txt (essencial) e
+# requirements-optional.txt (overlay), para que uma falha do winsdk nunca
+# atrapalhe o nucleo. Instalacao manual (avancado): python -m pip install -r requirements.txt
+
 # Core (panel + engine)
 customtkinter>=5.2.0
 pymem>=1.13.0
 capstone>=5.0.0
 
 # Price overlay (optional feature)
-winsdk>=1.0.0
+# NB: winsdk only ships pre-releases (e.g. 1.0.0b10) -> no ">=1.0.0" floor,
+# and it needs "pip install --pre winsdk". INSTALL.bat handles this for you.
+winsdk
 pillow>=10.0.0
 numpy>=1.24.0
 

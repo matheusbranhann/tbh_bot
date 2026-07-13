@@ -39,14 +39,27 @@ market price browser, and a set of hands-off automations (open boxes, auto-stash
 2. Start **TaskbarHero** and get in-game.
 3. Double-click `TBH_Panel.exe`. It finds the game automatically and connects.
 
-### Option B — from source
-```bash
-pip install -r requirements.txt
-python tbh_panel.py        # or double-click TBH.bat on Windows
-```
+### Option B — from source (Windows, no commands to type)
+1. Double-click **`INSTALL.bat`**. It finds a suitable **64-bit Python** (offers to install it via `winget`
+   if missing), creates an isolated `.venv`, and installs every dependency for you.
+2. Double-click **`TBH.bat`** to launch the panel.
 
-**Requirements:** Windows, Python 3.10+, and the game running.
-The overlay feature also needs `winsdk`, `pillow`, `numpy` (already in `requirements.txt`).
+> Don't run `pip install -r requirements.txt` by hand — `INSTALL.bat` does it safely (isolated `.venv`,
+> and a failure of the optional overlay packages never blocks the panel).
+
+**Requirements:** Windows 10/11 and **64-bit Python 3.9+** (the installer can install it for you). The
+optional price-overlay needs `winsdk`, `pillow`, `numpy`; if those can't install on a very new Python,
+the panel still runs — only the overlay is skipped.
+
+<details><summary>Advanced / manual install</summary>
+
+```bash
+py -3 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements-core.txt      # core (required)
+.venv\Scripts\python -m pip install -r requirements-optional.txt  # overlay (optional)
+.venv\Scripts\python tbh_panel.py
+```
+</details>
 
 ---
 

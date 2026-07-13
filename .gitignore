@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Ambiente virtual criado pelo INSTALL.bat (nunca commitar/empacotar)
+.venv/
+.tbh_wtest.tmp
+
 # PyInstaller
 build/
 dist/

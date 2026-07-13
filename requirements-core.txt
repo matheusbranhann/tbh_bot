@@ -1,0 +1,5 @@
+# NUCLEO - sem estes o painel nao abre. Todos tem "wheel" para qualquer Python.
+# Instale dando duplo-clique em INSTALL.bat (recomendado).
+customtkinter>=5.2.0
+pymem>=1.13.0
+capstone>=5.0.0

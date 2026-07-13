@@ -1,0 +1,8 @@
+# OPCIONAL - feature de overlay de preco (OCR). O painel abre normalmente sem estes.
+# Se algum falhar (ex.: winsdk sem wheel num Python muito novo), o INSTALL.bat
+# apenas avisa e continua; so a overlay fica indisponivel.
+numpy>=1.24.0
+pillow>=10.0.0
+# winsdk so publica pre-release (ex.: 1.0.0b10); por isso SEM ">=1.0.0"
+# e o INSTALL.bat instala com --pre. Nao coloque um piso de versao aqui.
+winsdk
