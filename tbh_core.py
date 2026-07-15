@@ -1128,7 +1128,7 @@ class Engine:
             try:
                 did=False
                 if W.get("autobox") and self._do_autobox(): did=True          # 1) caixa: prioridade maxima
-                if (W.get("autoitem") or W.get("autosynth")) and self._do_stash(used): did=True   # 2) stash
+                if (W.get("autoitem") or W.get("autosynth")) and self._do_stash_bulk(used): did=True  # 2) stash EM LOTE (rapido)
                 if W.get("autosynth") and not did and self._do_synth(): did=True # 3) fuse (so se nao houve caixa/stash pendente)
                 if W.get("autoitem") and not did and self._sort_grade_step(2): did=True  # 4) ordena o stash por grade (so quando ocioso)
                 time.sleep(0.12 if did else 0.5)
@@ -1180,6 +1180,48 @@ class Engine:
             if not inv2 or not any(u==src_uid for _,u,_ in inv2["occ"]): break
             time.sleep(0.03)
         return True
+    def _slot_objs(self, off):
+        """Ponteiros dos slots de uma List (inv/stash) em 1 leitura BULK (rapido)."""
+        bau=self._resolve_bau()
+        if not bau: return None, []
+        PSD=self.u64(bau+self.sym.get("inv_psd_off",INV_PSD_OFF))
+        if not self.vptr(PSD): return None, []
+        lp=self.u64(PSD+off); arr=self.u64(lp+0x10); sz=self.u32(lp+0x18) or 0
+        sz=min(sz,4000)
+        if not arr or sz==0: return PSD, []
+        raw=self.rb(arr+0x20, sz*8) or b""
+        return PSD,[int.from_bytes(raw[i*8:i*8+8],"little") for i in range(sz) if len(raw)>=i*8+8]
+    def _do_stash_bulk(self, used, maxn=150):
+        """Move VARIOS itens inv->stash de uma vez: le inv+stash 1x (bulk, 1 read/slot), calcula todos
+        os pares (src->slot livre) e dispara em RAJADA — SEM reflect-wait entre cada. ~50x mais rapido
+        que 1-por-vez. Retorna quantos moveu."""
+        ra=self._ra()
+        if not ra: return 0
+        _,inv_slots=self._slot_objs(self.sym.get("inv_slots_off",0x88))
+        srcs=[]
+        for o in inv_slots:                                    # itens ocupados no inventario
+            if not o: continue
+            d=self.rb(o+0x10,0x11)                             # idx@0x10, uid@0x18, unlock@0x20 numa leitura
+            if not d or len(d)<0x11 or not d[0x10]: continue   # unlock==0 -> pula
+            if int.from_bytes(d[8:16],"little")!=0:            # uid!=0 -> ocupado
+                srcs.append(int.from_bytes(d[0:4],"little"))   # idx
+        if not srcs: return 0
+        _,stash_slots=self._slot_objs(self.sym.get("stash_off",0x90))
+        slots=[]
+        for o in stash_slots:                                  # slots LIVRES no stash
+            if not o: continue
+            d=self.rb(o+0x10,0x11)
+            if not d or len(d)<0x11 or not d[0x10]: continue
+            if int.from_bytes(d[8:16],"little")==0:            # uid==0 -> livre
+                idx=int.from_bytes(d[0:4],"little")
+                if idx not in used: slots.append(idx)
+                if len(slots)>=len(srcs): break
+        n=min(len(srcs),len(slots),maxn)
+        for k in range(n):                                     # RAJADA: 1 dispatch por item, sem reflect-wait
+            self._dispatch(2, argP=ra, req=(1, srcs[k], 2, slots[k], 1))
+            used.add(slots[k])
+        if len(used)>800: used.clear()
+        return n
     def _do_synth(self):
         """Uma tentativa de SYNTHESIS 65-80 SEGURA. Retorna True se fundiu. *** NUNCA funde nivel baixo ***.
         NAO toca inf/ilo (resetariam o nivel pra 1-10 e queimariam itens). O user deixa o Cubo aberto no
