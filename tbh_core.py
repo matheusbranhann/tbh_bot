@@ -165,10 +165,14 @@ def _extract_from_dump(ddir):
             seg2=src[cs:ce]
             mm=re.search(r'RVA: (0x[0-9A-Fa-f]+)[^\n]*\n\s*public static int \w+\(EBoxType a\)',seg2)
             if mm: out["iuw"]=int(mm.group(1),16)
-    # imx=uw.Cube trigger synthesis/craft: <TriggerCurrentRecipeLogic> (nome preservado no state machine)
-    mm=re.search(r'\[AsyncStateMachine\(typeof\(uw\.Cube\.<TriggerCurrentRecipeLogic>[^\n]*\n\s*// RVA: (0x[0-9A-Fa-f]+)',src)
+    # RECIPE TYPE (obfuscado, muda entre builds: ux@2c43 -> uw@c824). Ancora estavel:
+    # 'Dictionary<ERecipeType, List<X>>' com X curto/lowercase = o tipo da recipe.
+    mrt=re.search(r'Dictionary<ERecipeType, List<([a-z]{1,4})>>',src)
+    RT=mrt.group(1) if mrt else "ux"                                          # fallback 2c43
+    # imx=Cube trigger synthesis/craft: <TriggerCurrentRecipeLogic> (nome preservado); namespace FLEXIVEL
+    mm=re.search(r'\[AsyncStateMachine\(typeof\(\w+\.Cube\.<TriggerCurrentRecipeLogic>[^\n]*\n\s*// RVA: (0x[0-9A-Fa-f]+)',src)
     if mm: out["imx"]=int(mm.group(1),16)
-    # === SYNTHESIS (uw.Cube): ancora na classe 'Cube' (nome estavel) + assinaturas UNICAS dos metodos ===
+    # === SYNTHESIS (Cube): ancora na classe 'Cube' (nome estavel) + assinaturas UNICAS dos metodos ===
     mcube=re.search(r'public static class \S*\bCube\b',src)
     if mcube:
         seg=src[mcube.start():mcube.start()+95000]
@@ -177,8 +181,8 @@ def _extract_from_dump(ddir):
             return int(m.group(1),16) if m else None
         out["ilo"]=_rb(r'public static void \w+\(EItemSynthesisType a\)')      # set tipo
         out["ili"]=_rb(r'public static bool \w+\(EGradeType a\)')             # set grade (evento)
-        out["inf"]=_rb(r'private static void \w+\(ux a\)')                    # set recipe (bery)
-        out["ima"]=_rb(r'public static bool \w+\(ux a\)')                     # set variante de nivel
+        out["inf"]=_rb(r'private static void \w+\(%s a\)'%RT)                 # set recipe (bery) — usa RECIPE TYPE
+        out["ima"]=_rb(r'public static bool \w+\(%s a\)'%RT)                  # set variante de nivel — usa RECIPE TYPE
         out["iog"]=_rb(r'private static void \w+\(int a, CubeInData b\)')     # builder recipe-grade
         out["ioa"]=_rb(r'public static EAddCubeResult \w+\(ESlotType a, int b\)')  # add item ao cubo
         # ipu = 'public static void X()' IMEDIATAMENTE antes de ipv (assinatura unica: retorna BucketCountResult)
@@ -211,28 +215,54 @@ def _redump():
     finally:
         shutil.rmtree(td,ignore_errors=True)
 
+# simbolos CRITICOS que as automacoes precisam — a extracao so e "boa" se TODOS resolverem.
+# (llm/cmd11 e codigo morto -> nao entra; inv_klass_ti|bau_ti = 1 dos 2 basta)
+_CRIT_SYMS=("gra","upd","llx","iw","ilo","ipu","imx","inf","ili","iog","ioa","ima","iuw","izb","inv_slots_off","stash_off")
+def _offsets_ok(got):
+    """True se o dict tem TODOS os simbolos criticos (nao aceita extracao parcial que quebra features)."""
+    if not isinstance(got,dict): return False
+    if not all(got.get(k) for k in _CRIT_SYMS): return False
+    return bool(got.get("inv_klass_ti") or got.get("bau_ti"))   # singleton do inventario (1 dos 2)
+
+def _missing_syms(got):
+    m=[k for k in _CRIT_SYMS if not (isinstance(got,dict) and got.get(k))]
+    if isinstance(got,dict) and not (got.get("inv_klass_ti") or got.get("bau_ti")): m.append("inv_singleton")
+    return m
+
 def resolve_symbols(log=lambda m:None):
-    """Retorna {gra,bau_ti,ynj} pra build atual. Auto re-dumpa se o jogo atualizou."""
+    """Resolve os offsets do build atual. Auto re-dumpa (com retry) se o jogo atualizou.
+    NUNCA usa RVAs de outro build (isso quebraria tudo) — melhor parcial que errado."""
     os.makedirs(CACHE,exist_ok=True)
-    _best=lambda: dict(max(KNOWN_BUILDS.values(), key=len))   # build com MAIS offsets = mais completo/recente
     h=dll_hash()
-    if not h: return _best()                                  # sem DLL: chuta o mais completo (nao o 1o/antigo)
+    if not h:
+        log("!! nao consegui ler GameAssembly.dll — sem offsets (features off ate resolver).")
+        return {"gra":None,"bau_ti":None,"ynj":[],"error":"no_dll_hash"}
     if h in KNOWN_BUILDS:
         return dict(KNOWN_BUILDS[h])
     cf=os.path.join(CACHE,"offsets_%s.json"%h)
     if os.path.exists(cf):
-        try: return json.load(open(cf))
+        try:
+            cached=json.load(open(cf))
+            if _offsets_ok(cached): return cached      # so reaproveita cache se estiver COMPLETO
+            log("offsets em cache incompletos (%s) — re-dumpando."%",".join(_missing_syms(cached)))
         except Exception: pass
     log("Game updated (build %s) — re-dumping offsets automatically… (~30s)"%h)
-    got=_redump()
-    if got.get("gra") or got.get("ynj"):        # extracao OK (bau_ti pode ser None = resolve em runtime)
-        try: json.dump(got,open(cf,"w"))
-        except Exception: pass
-        log("New offsets resolved and saved (build %s)."%h)
-    else:
-        log("Re-dump failed (%s). Using last known."%got.get("error","?"))
-        got=_best()
-    return got
+    last={}
+    for attempt in range(3):                            # retry: falhas transientes do dumper
+        got=_redump()
+        if _offsets_ok(got):
+            try: json.dump(got,open(cf,"w"))
+            except Exception: pass
+            log("New offsets resolved and saved (build %s)."%h)
+            return got
+        last=got if isinstance(got,dict) else {}
+        log("Re-dump tentativa %d incompleta (faltam: %s)."%(attempt+1,", ".join(_missing_syms(got)) or got.get("error","?")))
+    # NAO caiu no _best() de proposito: RVAs de outro build quebram tudo. Retorna o parcial + erro.
+    log("!! Re-dump nao resolveu todos os offsets. Recomendo checar o extrator. (parcial salvo p/ diagnostico)")
+    try: json.dump(last,open(cf,"w"))
+    except Exception: pass
+    last["error"]=last.get("error") or "extracao_incompleta"
+    return last
 
 # ============================= PRECOS =============================
 GW={"common":0,"normal":0,"uncommon":1,"rare":2,"legendary":3,"immortal":4,
@@ -811,7 +841,7 @@ class Engine:
     # data @cave+0x800: en@0 doFlag@1 inop@2 cmd@4 argP@8 argI@0x10 cnt@0x14
     # cmds: 1=box llx(argP,0) · 2=stash igj(argP=ra,INVENTORY,argI,null,STASH) ·
     #       3=synth ilo(argI) · 4=synth ipu() · 5=synth imx()
-    def _dispatch_code(self, cave, back_va):
+    def _dispatch_code(self, cave, back_va, stolen):
         s=self.sym; B=self.base
         LLX=B+s.get("llx",0); IW=B+s.get("iw",0); ILO=B+s.get("ilo",0); IPU=B+s.get("ipu",0); IMX=B+s.get("imx",0); INF=B+s.get("inf",0); ILI=B+s.get("ili",0); IOG=B+s.get("iog",0); IOA=B+s.get("ioa",0); IMA=B+s.get("ima",0); LLM=B+s.get("llm",0)
         D=cave+0x800; D_EN=D+0; D_DO=D+1; D_INOP=D+2; D_CMD=D+4; D_ARGP=D+8; D_ARGI=D+0x10; D_CNT=D+0x14; D_ARG2=D+0x18; D_REQ=D+0x20
@@ -884,36 +914,61 @@ class Engine:
         c+=b"\x48\xB8"+imm(D_CNT)+b"\xFF\x00"                          # cnt++
         L("skip")
         c+=bytes([0x9D,0x41,0x5B,0x41,0x5A,0x41,0x59,0x41,0x58,0x5B,0x5A,0x59,0x58])   # popfq; pops
-        c+=b"\x40\x53\x48\x83\xEC\x20"                                 # stolen: push rbx; sub rsp,0x20
+        c+=stolen                                                     # prologo roubado REAL (dinamico, a prova de update)
         c+=b"\xE9"; rbp=len(c); c+=b"\x00\x00\x00\x00"
         c[rbp:rbp+4]=struct.pack("<i", back_va-(cave+rbp+4))
         for pos,l in fix: c[pos:pos+4]=struct.pack("<i", lab[l]-(pos+4))
         return bytes(c)
+    def _prologue_len(self, addr, minlen=5, maxlen=8):
+        """Bytes de instrucoes INTEIRAS cobrindo >=minlen (p/ o E9 jmp de 5). None se rip-rel/branch
+        (nao da p/ relocar com seguranca). Dinamico via capstone -> a prova de update."""
+        try:
+            import capstone
+            raw=self.rb(addr,24)
+            if not raw: return None
+            md=capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64); n=0
+            for ins in md.disasm(raw, addr):
+                if "rip" in ins.op_str or ins.mnemonic[0]=="j" or ins.mnemonic=="call": return None
+                n+=ins.size
+                if n>=minlen: return n if n<=maxlen else None
+        except Exception: return None
+        return None
     def _install_dispatch(self):
         upd=self.sym.get("upd")
         if not upd or not self.sym.get("llx"): self.log("dispatcher: offset upd/llx missing"); return False
-        UPD=self.base+upd; stolen=self.rb(UPD,6); KNOWN=b"\x40\x53\x48\x83\xEC\x20"
-        if not stolen or len(stolen)!=6: return False
-        if stolen!=KNOWN:
-            if stolen[0]==0xE9:                                # hook stray de sessao morta -> restaura o prologo e reinstala
-                hs=self._suspend_all()
-                try: self.wb(UPD,KNOWN)
-                finally: self._resume_all(hs)
-                stolen=KNOWN; self.log("dispatcher: stray hook removed, reinstalling")
-            else:
-                self.log("dispatcher: unexpected InputManager.Update prologue (%s)"%stolen.hex()); return False
+        UPD=self.base+upd
+        cachef=os.path.join(CACHE,"upd_prologue_%s.bin"%(dll_hash() or "x"))
+        head=self.rb(UPD,1)
+        if not head: return False
+        if head[0]==0xE9:                                     # hook stray de sessao morta -> restaura do cache
+            orig=None
+            try: orig=open(cachef,"rb").read()
+            except Exception: pass
+            if not orig or len(orig)<5:
+                self.log("dispatcher: stray hook sem prologo cacheado — nao curo com seguranca"); return False
+            hs=self._suspend_all()
+            try: self.wb(UPD,orig)
+            finally: self._resume_all(hs)
+            self.log("dispatcher: stray hook removido, prologo restaurado do cache")
+        # prologo limpo: descobre DINAMICAMENTE quantos bytes roubar (nao hardcoda -> sobrevive a update)
+        plen=self._prologue_len(UPD)
+        if not plen:
+            self.log("dispatcher: prologo do InputManager.Update nao-relocavel (rip/branch)"); return False
+        stolen=self.rb(UPD,plen)
+        try: open(cachef,"wb").write(stolen)                  # cacheia p/ self-heal numa sessao futura
+        except Exception: pass
         cave=self.alloc_cave(UPD)
         if not cave: self.log("dispatcher: cave failed"); return False
-        self.wb(cave+0x800,b"\x00"*0x50); self.wb(cave,self._dispatch_code(cave,UPD+6))
+        self.wb(cave+0x800,b"\x00"*0x50); self.wb(cave,self._dispatch_code(cave,UPD+plen,stolen))
         self.wb(cave+0x900,b"\xC3")                            # ret p/ o fake delegate
         self.wb(cave+0x920,b"\x00"*0x48); self.wb(cave+0x920+0x18,struct.pack("<Q",cave+0x900))  # fake[+0x18]=ret
-        patch=b"\xE9"+struct.pack("<i",cave-(UPD+5))+b"\x90"
+        patch=b"\xE9"+struct.pack("<i",cave-(UPD+5))+b"\x90"*(plen-5)
         hs=self._suspend_all()
         try: self.wb(UPD,patch)
         finally: self._resume_all(hs)
         self.wb(cave+0x800,b"\x01")                            # en
         self.abx={"cave":cave,"data":cave+0x800,"upd":UPD,"stolen":bytes(stolen)}
-        self.log("Dispatcher installed @ %#x"%cave); return True
+        self.log("Dispatcher installed @ %#x (prologo %d bytes)"%(cave,plen)); return True
     def _remove_dispatch(self):
         if not self.abx: return
         try:
