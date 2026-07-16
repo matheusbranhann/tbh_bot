@@ -963,20 +963,40 @@ class Engine:
         c[rbp:rbp+4]=struct.pack("<i", back_va-(cave+rbp+4))
         for pos,l in fix: c[pos:pos+4]=struct.pack("<i", lab[l]-(pos+4))
         return bytes(c)
-    def _prologue_len(self, addr, minlen=5, maxlen=8):
-        """Bytes de instrucoes INTEIRAS cobrindo >=minlen (p/ o E9 jmp de 5). None se rip-rel/branch
-        (nao da p/ relocar com seguranca). Dinamico via capstone -> a prova de update."""
+    def _orig_prologue(self, rva, n=24):
+        """Bytes ORIGINAIS de um RVA lidos do GameAssembly.dll NO DISCO — fonte GARANTIDA p/ curar um
+        hook orfao (o arquivo nunca tem os nossos patches), sem depender de cache. RVA->offset via PE."""
+        try:
+            with open(GA_PATH,"rb") as f: data=f.read()
+            e=int.from_bytes(data[0x3C:0x40],"little")                       # e_lfanew
+            nsec=int.from_bytes(data[e+6:e+8],"little")
+            secs=e+0x18+int.from_bytes(data[e+0x14:e+0x16],"little")         # +SizeOfOptionalHeader
+            for i in range(nsec):
+                s=secs+i*40
+                vsz=int.from_bytes(data[s+8:s+12],"little")
+                va=int.from_bytes(data[s+12:s+16],"little")
+                raw=int.from_bytes(data[s+20:s+24],"little")
+                if va<=rva<va+max(vsz,1):
+                    off=rva-va+raw
+                    return data[off:off+n]
+        except Exception: pass
+        return None
+    def _plen_of(self, raw, base_addr, minlen=5, maxlen=8):
+        """Instrucoes INTEIRAS cobrindo >=minlen a partir de BYTES (p/ o E9 jmp de 5). None se
+        rip-rel/branch (nao da p/ relocar com seguranca)."""
+        if not raw: return None
         try:
             import capstone
-            raw=self.rb(addr,24)
-            if not raw: return None
             md=capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64); n=0
-            for ins in md.disasm(raw, addr):
+            for ins in md.disasm(raw, base_addr):
                 if "rip" in ins.op_str or ins.mnemonic[0]=="j" or ins.mnemonic=="call": return None
                 n+=ins.size
                 if n>=minlen: return n if n<=maxlen else None
         except Exception: return None
         return None
+    def _prologue_len(self, addr, minlen=5, maxlen=8):
+        """Idem, lendo da memoria do jogo. Dinamico via capstone -> a prova de update."""
+        return self._plen_of(self.rb(addr,24), addr, minlen, maxlen)
     def _install_dispatch(self):
         upd=self.sym.get("upd")
         if not upd or not self.sym.get("llx"): self.log("dispatcher: offset upd/llx missing"); return False
@@ -984,16 +1004,22 @@ class Engine:
         cachef=os.path.join(CACHE,"upd_prologue_%s.bin"%(dll_hash() or "x"))
         head=self.rb(UPD,1)
         if not head: return False
-        if head[0]==0xE9:                                     # hook stray de sessao morta -> restaura do cache
+        if head[0]==0xE9:                                     # hook ORFAO de sessao morta -> restaura o original
             orig=None
-            try: orig=open(cachef,"rb").read()
+            try:                                              # 1) cache (rapido)
+                c=open(cachef,"rb").read()
+                if c and len(c)>=5: orig=c
             except Exception: pass
+            if not orig:                                      # 2) FALLBACK GARANTIDO: le do GameAssembly.dll no
+                raw=self._orig_prologue(upd,24)               #    DISCO (o arquivo nunca tem nossos hooks).
+                p=self._plen_of(raw,UPD)                      #    Nao depende de cache nem da pasta do exe.
+                if raw and p: orig=raw[:p]
             if not orig or len(orig)<5:
-                self.log("dispatcher: stray hook sem prologo cacheado — nao curo com seguranca"); return False
+                self.log("dispatcher: nao consegui recuperar o prologo original do hook orfao"); return False
             hs=self._suspend_all()
             try: self.wb(UPD,orig)
             finally: self._resume_all(hs)
-            self.log("dispatcher: stray hook removido, prologo restaurado do cache")
+            self.log("dispatcher: hook orfao removido, prologo original restaurado")
         # prologo limpo: descobre DINAMICAMENTE quantos bytes roubar (nao hardcoda -> sobrevive a update)
         plen=self._prologue_len(UPD)
         if not plen:
