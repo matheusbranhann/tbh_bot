@@ -310,7 +310,7 @@ class Panel:
             if not self.v_autobox.get():
                 self.v_autobox.set(True); self.eng.want["autobox"]=True     # box: open boxes -> generate items
             self.eng.want["synth_lvlgate"]=True
-            self.log("⚠ Auto-fuse needs the CUBE OPEN at Lv.65~80 (it won't fuse with the cube closed). Switch the type (Gear/Material/Accessory) yourself.")
+            self.log("⚗️ Auto-fuse ON: funde common/uncommon/rare no Lv.65~80, ciclando Equipment/Accessory/Material sozinho.")
         self._upd_active()
     def sync_stats(self):
         d={}

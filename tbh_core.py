@@ -488,7 +488,7 @@ def _stage_anchors(ddir):
         raise AssertionError("jgq sem a constante 1101 — ancora suspeita")
     return out
 
-_EXTRACT_VER=3   # BUMPAR sempre que a extracao mudar: invalida os caches antigos. Sem isso um offset
+_EXTRACT_VER=4   # BUMPAR sempre que a extracao mudar: invalida os caches antigos. Sem isso um offset
                  # errado fica gravado no disco e o fix nao chega em quem ja rodou o painel.
 _CRIT_SYMS=("gra","upd","llx","iw","ra_class","ilo","ipu","imx","inf","ili","iog","ioa","ima","iuw","izb","inv_slots_off","stash_off")
 def _offsets_ok(got):
@@ -1596,7 +1596,7 @@ class Engine:
                 did=False
                 if W.get("autobox") and self._do_autobox(): did=True          # 1) caixa: prioridade maxima
                 if (W.get("autoitem") or W.get("autosynth")) and self._do_stash_bulk(used): did=True  # 2) stash EM LOTE (rapido)
-                if W.get("autosynth") and not did and self._do_synth(): did=True # 3) fuse (so se nao houve caixa/stash pendente)
+                if W.get("autosynth") and self._do_synth(): did=True          # 3) fuse — NAO gatear por 'not did' (senao o box/stash o matam de fome); _do_synth e rapido quando nao ha 9
                 if W.get("autoboss") and not did and self._do_autoboss(): did=True  # 4) act boss: gasta 1 soulstone e volta
                 if W.get("evolve") and not did and self._do_evolve(): did=True      # 5) evolucao: sempre na fase mais nova
                 if W.get("autoitem") and not did and self._sort_grade_step(2): did=True  # 5) ordena o stash por grade (so quando ocioso)
@@ -2112,24 +2112,30 @@ class Engine:
             if any(counts.get((t,g),0)>=9 for g in (0,1,2)): tgt=t; break
         if tgt is None:
             return False                                                    # nada pra fundir -> o loop segue so verificando
-        if not self._open_cube() or self._synth_busy(): return False
-        if not self._synth_set_lv6580(): return False                       # Synthesis + Lv.65~80 (um passo)
+        if not self._open_cube(): return False
         sf=self._cube_sf()
-        self._synth_set_type(tgt)                                           # tipo (Equipment/Accessory/Material)
-        self._synth_set_lv6580()                                            # trocar o tipo RESETA o nivel -> re-por 65~80
-        self._dispatch(4); time.sleep(0.2)                                  # AUTO FILL
+        # Include-Stash ON (psd+0x60): sem isto o auto-fill so olha o INVENTARIO, e como o auto-stash ja
+        # mandou os itens pro BAU, ele enchia <9 e nao fundia.
+        try:
+            psd=self.u64(self._resolve_bau()+self.sym.get("inv_psd_off",INV_PSD_OFF))
+            if self.vptr(psd): self.wb(psd+0x60,b"\x01")
+        except Exception: pass
+        if not self._synth_set_lv6580(): self._close_cube(); return False   # Synthesis + Lv.65~80
+        self._synth_set_type(tgt)                                          # tipo (Equipment/Accessory/Material)
+        self._synth_set_lv6580()                                          # trocar o tipo RESETA o nivel -> re-por 65~80
+        self._dispatch(4); time.sleep(0.25)                               # AUTO FILL
         self._synth_set_lv6580()
-        if self._cube_realn(sf)<9:                                          # se re-por o nivel esvaziou -> enche de novo
-            self._dispatch(4); time.sleep(0.2)
+        if self._cube_realn(sf)<9:                                        # se re-por o nivel esvaziou -> enche de novo
+            self._dispatch(4); time.sleep(0.25)
         n=self._cube_realn(sf)
-        if n<9: self._close_cube(); return False                           # nao encheu 9 -> aborta (nada fundido)
+        if n<9: self._close_cube(); return False                          # nao encheu 9 -> aborta
         self._dispatch(5, timeout=2.0)                                     # SYNTHESIS (imx)
         for _ in range(200):
             if not self._synth_busy(): break
             time.sleep(0.05)
-        self.log("⚗️ Synthesis: %s (9 fundidos)"%["Equipment","Accessory","Material"][tgt])
-        self._close_cube(); time.sleep(0.2); self._open_cube()             # fecha+reabre: itens voltam pro inv/stash
-        return True
+        self.log("⚗️ Synthesis: %s (9 fundidos -> 1 de grade acima)"%["Equipment","Accessory","Material"][tgt])
+        self._close_cube()                                                 # FECHA -> os itens voltam pro inv/stash (auto-stash cuida);
+        return True                                                        # o proximo _do_synth reabre se tiver mais 9 (nao deixa aberto travando o auto-box)
     def _grade_of_key(self, key):
         """Grade REAL do item (via izb/ItemInfoData, cacheado). Fallback: digito da key."""
         if not key: return 99
