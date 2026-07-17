@@ -1935,6 +1935,52 @@ class Engine:
             return self._currency(100001)
         except Exception:
             return None
+    # ============ CUBE SYNTHESIS: dropdowns de tipo / nivel / grade ============
+    # Offsets no cube_sf (= static_fields da classe Cube), DESCOBERTOS POR DIFF AO VIVO (o usuario mudou
+    # cada dropdown na tela e eu comparei a memoria antes/depois):
+    #   berp @0xC8  = EGradeType selecionado         (0=common 1=uncommon 2=rare 3=legendary+)
+    #   bers @0xE0  = Dictionary<ERecipeType,List<uw>>. bers[SYNTHESIS=1] = os 8 TIERS de nivel do dropdown,
+    #                 em ordem ASCENDENTE (Lv.1~10 ... Lv.65~80). **A ULTIMA (indice 7) = Lv.65~80** (confirmado pelo user).
+    #   betd @0x254 = EItemSynthesisType selecionado (0=Gear/Equipment 1=Accessory 2=Material) <- o dropdown da setinha
+    #   bete @0x258 = a recipe (uw) do TIER de nivel ATUAL. **inf(uw) @cmd6 SETA isto** = e assim que se muda o nivel.
+    # Funcoes (dispatcher): ilo/cmd3=iln(EItemSynthesisType) seleciona o TIPO · ili/cmd7=ilh(EGradeType) o GRADE ·
+    # inf/cmd6=ine(uw) seleciona o TIER de nivel. ATENCAO: trocar o TIPO (ilo) RESETA o nivel -> re-chamar _synth_set_lv6580.
+    SYNTH_TYPE_OFF=0x254; SYNTH_GRADE_OFF=0xC8; SYNTH_LVRECIPE_OFF=0x258
+    def _synth_recipes(self):
+        """As recipes de SYNTHESIS (os tiers de nivel do dropdown). Ultima = Lv.65~80."""
+        sf=self._cube_sf()
+        if not sf: return []
+        d=self.u64(sf+0xE0)
+        if not self.vptr(d): return []
+        ent=self.u64(d+0x18); n=self.u32(d+0x20); syn=0
+        for i in range(n or 0):
+            a=ent+0x20+i*0x18
+            if self.u32(a+8)==1: syn=self.u64(a+0x10); break     # ERecipeType.SYNTHESIS=1
+        if not self.vptr(syn): return []
+        arr=self.u64(syn+0x10); m=self.u32(syn+0x18)
+        if not self.vptr(arr) or not m or m>64: return []
+        return [self.u64(arr+0x20+i*8) for i in range(m)]
+    def _synth_type(self):
+        sf=self._cube_sf(); return self.u32(sf+self.SYNTH_TYPE_OFF) if sf else None
+    def _synth_grade(self):
+        sf=self._cube_sf(); return self.u32(sf+self.SYNTH_GRADE_OFF) if sf else None
+    def _synth_set_lv6580(self):
+        """Forca o dropdown de nivel pra Lv.65~80 (a ULTIMA recipe de synthesis) via inf. True se setou.
+        Precisa do cubo ABERTO. Chamar SEMPRE apos trocar o tipo (ilo reseta o nivel)."""
+        recs=self._synth_recipes()
+        if not recs: return False
+        target=recs[-1]                                          # Lv.65~80 = ultimo tier
+        self._dispatch(6, argP=target, timeout=1.2); time.sleep(0.15)
+        sf=self._cube_sf()
+        return bool(sf and self.u64(sf+self.SYNTH_LVRECIPE_OFF)==target)
+    def _synth_set_type(self, t):
+        """ilo(EItemSynthesisType): 0=Equipment/Gear 1=Accessory 2=Material. RESETA o nivel -> chamar _synth_set_lv6580 depois."""
+        self._dispatch(3, argI=t, timeout=1.0); time.sleep(0.15)
+        sf=self._cube_sf(); return bool(sf and self.u32(sf+self.SYNTH_TYPE_OFF)==t)
+    def _synth_set_grade(self, g):
+        """ili(EGradeType) seleciona o grade."""
+        self._dispatch(7, argI=g, timeout=1.0); time.sleep(0.1)
+        sf=self._cube_sf(); return bool(sf and self.u32(sf+self.SYNTH_GRADE_OFF)==g)
     def _uimanager(self):
         """Instancia singleton nq<UIManager> (via TypeInfo). uimain = [UM+0xA8]."""
         ti=self.sym.get("uimgr_ti")
@@ -2039,34 +2085,51 @@ class Engine:
         except Exception: pass
     def _currency(self, key):
         return None   # placeholder: resolvido no teste ao vivo (ler CurrencyManager). read_gold tolera None.
+    def _synth_fuseable(self):
+        """{(EItemSynthesisType, grade): qtd} dos itens que PODEM ir pra synthesis no Lv.65~80:
+        grade C/U/R (0/1/2, NUNCA legendary+) do tipo Gear/Accessory/Material, e Lv.61+ (o tier 65~80
+        exige; material nao tem nivel). inv+bau (a synthesis usa 'Include Stash')."""
+        c=collections.Counter()
+        for _,key,uid in self._inv_index_items():
+            info=self._item_info(key)
+            if not info: continue
+            _,grade,synth,lvl=info
+            if grade in (0,1,2) and synth in (0,1,2) and (synth==2 or (lvl or 0)>=61):
+                c[(synth,grade)]+=1
+        return c
     def _do_synth(self):
-        """Uma tentativa de SYNTHESIS 65-80 SEGURA. Retorna True se fundiu. *** NUNCA funde nivel baixo ***.
-        NAO toca inf/ilo (resetariam o nivel pra 1-10 e queimariam itens). O user deixa o Cubo no TIPO +
-        Lv.65~80; o bot ABRE o cubo sozinho se estiver fechado (eby), depois so da `ipu` (respeita o
-        dropdown) e `imx` se o resultado for >= 65 (a trava de nivel protege os itens mesmo apos auto-abrir)."""
+        """AUTO-FUSE (logica validada ao vivo com o usuario). UMA fusao por chamada; o loop re-chama.
+        Passos: conta os fundiveis; se algum TIPO tem >=9 de um grade C/U/R -> abre o cubo, poe em
+        Synthesis+Lv.65~80, seleciona o tipo (Equipment 1o), AUTO-FILL, funde, e FECHA+REABRE (os itens
+        voltam pro inv/stash -> o auto-stash cuida). Sem 9 de nada -> nao faz nada (loop so verifica).
+        SEGURANCA (sem risco de legendary): o auto-fill sempre pega o MENOR grade com 9, e C/U/R (<3) sao
+        sempre menores que legendary+; entao disparar so quando um C/U/R tem 9 -> nunca funde legendary
+        como ENTRADA (legendary so pode SURGIR de rare->legendary, que e permitido)."""
+        if not all(self.sym.get(k) for k in ("ilo","imx","eby","uimgr_ti")): return False
+        counts=self._synth_fuseable()
+        tgt=None                                                            # 1o tipo com um grade C/U/R >=9
+        for t in (0,1,2):
+            if any(counts.get((t,g),0)>=9 for g in (0,1,2)): tgt=t; break
+        if tgt is None:
+            return False                                                    # nada pra fundir -> o loop segue so verificando
+        if not self._open_cube() or self._synth_busy(): return False
+        if not self._synth_set_lv6580(): return False                       # Synthesis + Lv.65~80 (um passo)
         sf=self._cube_sf()
-        if not sf or self._synth_busy(): return False                        # ocupado
-        if not self.vptr(self.u64(sf+0x140)):                                # cubo FECHADO (recipe vazia)
-            if not (self.sym.get("eby") and self.sym.get("uimgr_ti")): return False
-            if not self._open_cube(): return False                           # abre sozinho (main screen)
-            sf=self._cube_sf()
-            if not sf or not self.vptr(self.u64(sf+0x140)): return False
-        mn,mx=self._synth_result_lvl(sf)
-        if (mx or 0)<SYNTH_MIN_LVL: return False                             # dropdown nao esta em 65-80 -> protege itens
-        stype=self.u32(sf+0x254)                                             # besx = tipo aberto
-        if not self._synth_ready_at_level(stype, mn or SYNTH_MIN_LVL, mx): return False  # so age se ha >=9 de um grade 65-80
-        psd=self.u64(self._resolve_bau()+self.sym.get("inv_psd_off",INV_PSD_OFF))
-        if self.vptr(psd): self.wb(psd+0x60,b"\x01")                        # Include-Stash ON
-        self._dispatch(4); time.sleep(0.28)                                 # ipu: full-fill do tipo+nivel do user
-        _,maxrl=self._synth_result_lvl(sf)
-        if self.rb(sf+0x229,1)==b"\x01" and self._cube_realn(sf)>=9 and (maxrl or 0)>=SYNTH_MIN_LVL:
-            self._dispatch(5)                                               # imx: funde 9->1 (resultado 65+)
-            for _ in range(200):
-                if not self._synth_busy(): break
-                time.sleep(0.05)
-            self.log("⚗️ Synthesis: fused 9 (result Lv.%d)."%maxrl)
-            return True
-        return False
+        self._synth_set_type(tgt)                                           # tipo (Equipment/Accessory/Material)
+        self._synth_set_lv6580()                                            # trocar o tipo RESETA o nivel -> re-por 65~80
+        self._dispatch(4); time.sleep(0.2)                                  # AUTO FILL
+        self._synth_set_lv6580()
+        if self._cube_realn(sf)<9:                                          # se re-por o nivel esvaziou -> enche de novo
+            self._dispatch(4); time.sleep(0.2)
+        n=self._cube_realn(sf)
+        if n<9: self._close_cube(); return False                           # nao encheu 9 -> aborta (nada fundido)
+        self._dispatch(5, timeout=2.0)                                     # SYNTHESIS (imx)
+        for _ in range(200):
+            if not self._synth_busy(): break
+            time.sleep(0.05)
+        self.log("⚗️ Synthesis: %s (9 fundidos)"%["Equipment","Accessory","Material"][tgt])
+        self._close_cube(); time.sleep(0.2); self._open_cube()             # fecha+reabre: itens voltam pro inv/stash
+        return True
     def _grade_of_key(self, key):
         """Grade REAL do item (via izb/ItemInfoData, cacheado). Fallback: digito da key."""
         if not key: return 99
