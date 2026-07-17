@@ -42,12 +42,57 @@ def _ensure_assets():
                 os.makedirs(os.path.dirname(dst),exist_ok=True); shutil.copy2(s,dst)
             except Exception: pass
 _ensure_assets()
+def _steam_libraries():
+    """Todas as bibliotecas Steam da maquina (via registro + libraryfolders.vdf) — NAO hardcode.
+    Assim o jogo e achado em qualquer PC, esteja em C:, D:, num SSD externo, etc."""
+    libs=[]
+    try:
+        import winreg
+        for root,key in ((winreg.HKEY_CURRENT_USER,r"Software\Valve\Steam"),
+                         (winreg.HKEY_LOCAL_MACHINE,r"SOFTWARE\WOW6432Node\Valve\Steam")):
+            try:
+                with winreg.OpenKey(root,key) as k:
+                    sp=winreg.QueryValueEx(k,"SteamPath")[0]
+                    if sp: libs.append(os.path.normpath(sp))
+            except Exception: pass
+    except Exception: pass
+    for base in list(libs):
+        vdf=os.path.join(base,"steamapps","libraryfolders.vdf")
+        try:
+            txt=open(vdf,encoding="utf-8",errors="ignore").read()
+            for m in re.finditer(r'"path"\s*"([^"]+)"',txt):
+                libs.append(os.path.normpath(m.group(1).replace("\\\\","\\")))
+        except Exception: pass
+    return libs
+
+def _dotnet6_ok():
+    """.NET 6+ runtime disponivel? (o Il2CppDumper e .NET 6 self-contained-host). Sem ele nao adianta
+    tentar dumpar — a maioria das maquinas so tem o .NET Framework 4.8, que NAO serve."""
+    try:
+        r=subprocess.run(["dotnet","--list-runtimes"],capture_output=True,text=True,timeout=8,
+                         creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+        for ln in (r.stdout or "").splitlines():
+            m=re.match(r'Microsoft\.NETCore\.App (\d+)\.',ln)
+            if m and int(m.group(1))>=6: return True
+    except Exception: pass
+    # fallback: procura o host do runtime instalado
+    for pf in (os.environ.get("ProgramFiles",r"C:\Program Files"),):
+        d=os.path.join(pf,"dotnet","shared","Microsoft.NETCore.App")
+        try:
+            if any(v.split(".")[0].isdigit() and int(v.split(".")[0])>=6 for v in os.listdir(d)): return True
+        except Exception: pass
+    return False
+
 def _find_game_dir():
-    """Pasta REAL do jogo (onde vive GameAssembly.dll). BUG CORRIGIDO 2026-07-11: no exe congelado
-    HERE=dist/ -> a DLL esta no PAI, nao em HERE -> dll_hash falhava -> offsets errados/vazios ->
-    inventario 0 e caixa nao abria. Agora procura: HERE, pai de HERE, cwd, caminho Steam."""
-    cands=[HERE, os.path.dirname(HERE), os.getcwd(),
-           r"d:\SteamLibrary\steamapps\common\TaskbarHero"]
+    """Pasta REAL do jogo (onde vive GameAssembly.dll). Ordem: pastas do exe (caso o exe esteja junto
+    do jogo), depois TODAS as bibliotecas Steam da maquina. A fonte DEFINITIVA e o proprio processo do
+    jogo (ver Engine.attach -> _set_game_paths, que sobrepoe isto com o caminho REAL do modulo carregado).
+    Antes isto tinha um caminho HARDCODED (d:\\SteamLibrary...) da MINHA maquina -> o painel nao achava o
+    jogo no PC dos outros (dll_hash None -> offsets vazios). Foi o bug que pegou o amigo do usuario."""
+    cands=[HERE, os.path.dirname(HERE), os.getcwd()]
+    for lib in _steam_libraries():
+        cands.append(os.path.join(lib,"steamapps","common","TaskbarHero"))
+        cands.append(os.path.join(lib,"steamapps","common","TaskbarHero".lower()))
     seen=set()
     for d in cands:
         if not d or d in seen: continue
@@ -59,8 +104,20 @@ def _find_game_dir():
 GAME_DIR=_find_game_dir()
 GA_PATH=os.path.join(GAME_DIR,"GameAssembly.dll")
 META_PATH=os.path.join(GAME_DIR,"TaskBarHero_Data","il2cpp_data","Metadata","global-metadata.dat")
+def _set_game_paths(dll_path):
+    """Fixa os caminhos do jogo a partir do caminho REAL do GameAssembly.dll (vindo do processo vivo).
+    E a fonte mais confiavel: nao depende de onde o jogo esta instalado."""
+    global GAME_DIR, GA_PATH, META_PATH
+    try:
+        if dll_path and os.path.exists(dll_path):
+            GA_PATH=dll_path; GAME_DIR=os.path.dirname(dll_path)
+            META_PATH=os.path.join(GAME_DIR,"TaskBarHero_Data","il2cpp_data","Metadata","global-metadata.dat")
+            return True
+    except Exception: pass
+    return False
 DUMPER=P("tools","Il2CppDumper","Il2CppDumper.exe")
 CACHE=P("cache")
+BUNDLED_CACHE=os.path.join(getattr(sys,"_MEIPASS",HERE),"cache")   # offsets embutidos no exe (read-only)
 PROC="TaskBarHero.exe"; MOD="GameAssembly.dll"; STEAM_APPID="3678970"
 EXE=P("TaskBarHero.exe")
 
@@ -456,14 +513,29 @@ def resolve_symbols(log=lambda m:None):
     if h in KNOWN_BUILDS:
         return dict(KNOWN_BUILDS[h])
     cf=os.path.join(CACHE,"offsets_%s.json"%h)
-    if os.path.exists(cf):
+    # offsets prontos p/ ESTE build, sem dumpar: 1) cache gravado localmente  2) EMBUTIDOS no exe.
+    # Os embutidos sao a peca-chave da robustez: o exe ja sai com os offsets do build que ele acompanha,
+    # entao NUNCA precisa do Il2CppDumper (que exige .NET 6, ausente na maioria das maquinas) p/ o build
+    # atual. So cai no dump se o jogo atualizar pra um build que o exe ainda nao conhece.
+    for src in (cf, os.path.join(BUNDLED_CACHE,"offsets_%s.json"%h)):
         try:
-            cached=json.load(open(cf))
-            if cached.get("_ver")!=_EXTRACT_VER:       # extrator mudou -> cache velho pode ter offset errado
-                log("cache de offsets e de um extrator antigo — re-dumpando.")
-            elif _offsets_ok(cached): return cached    # so reaproveita cache se estiver COMPLETO
-            else: log("offsets em cache incompletos (%s) — re-dumpando."%",".join(_missing_syms(cached)))
+            if not os.path.exists(src): continue
+            cached=json.load(open(src,encoding="utf-8"))
+            if cached.get("_ver")!=_EXTRACT_VER:
+                log("cache de offsets de extrator antigo (%s) — ignorando."%os.path.basename(src)); continue
+            if _offsets_ok(cached):
+                if src!=cf:                              # veio do bundle -> grava no cache gravavel
+                    try: json.dump(cached,open(cf,"w"))
+                    except Exception: pass
+                return cached
+            log("offsets incompletos em %s (%s)."%(os.path.basename(src),",".join(_missing_syms(cached))))
         except Exception: pass
+    # precisa dumpar (build novo). Sem .NET 6 o Il2CppDumper nao roda -> avisa claro, nao falha calado.
+    if not _dotnet6_ok():
+        log("!! O jogo atualizou (build %s) e esta maquina NAO tem o .NET 6 pra re-extrair os offsets."%h)
+        log("!! Baixe a versao mais nova do painel (cada release ja vem com os offsets do build novo):")
+        log("!!   https://github.com/matheusbranhann/tbh_bot/releases")
+        return {"gra":None,"bau_ti":None,"ynj":[],"error":"needs_dotnet6"}
     log("Game updated (build %s) — re-dumping offsets automatically… (~30s)"%h)
     last={}
     for attempt in range(3):                            # retry: falhas transientes do dumper
@@ -580,6 +652,7 @@ class Engine:
             pm=pymem.Pymem(PROC)
             ga=pymem.process.module_from_name(pm.process_handle,MOD)
             if ga and ga.lpBaseOfDll:
+                _set_game_paths(getattr(ga,"filename",None))   # caminho REAL do DLL (funciona em qualquer PC)
                 if pm.process_id!=self.pid:
                     self.pid=pm.process_id; self.cache={}; self.sh=None; self.abx=None   # hooks morreram com o processo antigo
                     self.sym=resolve_symbols(self.log)
