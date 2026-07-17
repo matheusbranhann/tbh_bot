@@ -405,8 +405,10 @@ class Panel:
     def _apply_state(self,st):
         p=st.get("prot",{})
         self.v_actk.set(p.get("actk",False)); self.v_god.set(p.get("god",False)); self.v_autobox.set(p.get("autobox",False)); self.v_autoitem.set(p.get("autoitem",False)); self.v_autosynth.set(p.get("autosynth",False))
-        self.eng.want={"actk":self.v_actk.get(),"god":self.v_god.get(),"hitkill":False,"autobox":self.v_autobox.get(),"autoitem":self.v_autoitem.get(),"autosynth":self.v_autosynth.get()}
-        self._sync_synth_opts(log=False)   # re-empurra teto/tipos do auto-fuse (o reassign acima os apagaria)
+        # .update (nao reatribuir): reatribuir criava um dict NOVO -> perdia autoboss/evolve/watchdog/synth_* E
+        # deixava o _auto_loop (que fez W=self.want UMA vez) lendo o dict VELHO (perfil nao parava o loop). Mutar no lugar preserva as chaves e o loop enxerga.
+        self.eng.want.update({"actk":self.v_actk.get(),"god":self.v_god.get(),"hitkill":False,"autobox":self.v_autobox.get(),"autoitem":self.v_autoitem.get(),"autosynth":self.v_autosynth.get()})
+        self._sync_synth_opts(log=False)   # re-empurra teto/tipos do auto-fuse
         stt=st.get("stats",{})
         for n,(c,e,cur) in self.stat_vars.items():
             s=stt.get(n); c.set(bool(s and s.get("on"))); e.set(s.get("val","") if s else "")

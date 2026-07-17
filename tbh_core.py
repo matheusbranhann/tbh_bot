@@ -2119,11 +2119,13 @@ class Engine:
         types=self.want.get("synth_types")
         if types is None: types={0,1,2}                                    # ausente=default todos; set() vazio=NENHUM
         counts=self._synth_fuseable()
-        tgt=None                                                            # 1o tipo PERMITIDO com um grade <=teto >=9
+        blk=self.cache.get("synth_block",{}); now=time.time()
+        tgt=None                                                            # 1o tipo PERMITIDO (nao bloqueado) com um grade <=teto >=9
         for t in sorted(types):
+            if blk.get(t,0)>now: continue                                   # tipo deu over-cap ha pouco (auto-fill so acha grade>teto) -> nao reabrir (anti-livelock)
             if any(counts.get((t,g),0)>=9 for g in range(maxg+1)): tgt=t; break
         if tgt is None:
-            return False                                                    # nada pra fundir (dado o teto/tipos) -> o loop segue so verificando
+            return False                                                    # nada pra fundir (dado o teto/tipos/bloqueio) -> o loop segue so verificando
         if not self._open_cube(): return False
         sf=self._cube_sf()
         # Include-Stash ON (psd+0x60): sem isto o auto-fill so olha o INVENTARIO, e como o auto-stash ja
@@ -2135,14 +2137,16 @@ class Engine:
         if not self._synth_set_lv6580(): self._close_cube(); return False   # Synthesis + Lv.65~80
         self._synth_set_type(tgt)                                          # tipo (Equipment/Accessory/Material)
         self._synth_set_lv6580()                                          # trocar o tipo RESETA o nivel -> re-por 65~80
+        self.wb(sf+0xC8, struct.pack("<i",0x7F))                          # SENTINELA no berp: se o auto-fill NAO reescrever (medo do review), fica >teto -> pula (fail-safe)
         self._dispatch(4); time.sleep(0.25)                               # AUTO FILL
         self._synth_set_lv6580()
-        if self._cube_realn(sf)<9:                                        # se re-por o nivel esvaziou -> enche de novo
-            self._dispatch(4); time.sleep(0.25)
+        if self._cube_realn(sf)<9:                                        # se re-por o nivel esvaziou -> re-arma o sentinela e enche de novo
+            self.wb(sf+0xC8, struct.pack("<i",0x7F)); self._dispatch(4); time.sleep(0.25)
         n=self._cube_realn(sf)
         if n<9: self._close_cube(); return False                          # nao encheu 9 -> aborta
-        fg=self.u32(sf+0xC8)                                              # berp = grade que o auto-fill enfiou (ele seta o dropdown)
-        if fg is None or fg>maxg:                                          # TETO DE GRADE (seguranca dura): nunca funde acima do escolhido
+        fg=self.u32(sf+0xC8)                                              # berp = grade REAL que o auto-fill enfiou (provado ao vivo 3x: ele reescreve com o grade posto, ate sobre o sentinela)
+        if fg is None or not (0<=fg<=maxg):                               # TETO (fail-safe): so funde grade VALIDO 0..teto; sentinela(0x7F)/negativo/lixo/stale -> pula
+            self.cache.setdefault("synth_block",{})[tgt]=time.time()+20   # anti-livelock: o auto-fill so acha grade>teto p/ este tipo -> nao reabrir por 20s
             self._close_cube(); return False
         GN=["common","uncommon","rare","legendary","immortal","arcana","beyond","celestial","divine","cosmic"]
         self._dispatch(5, timeout=2.0)                                     # SYNTHESIS (imx)
