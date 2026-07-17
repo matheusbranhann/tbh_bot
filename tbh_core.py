@@ -13,6 +13,84 @@ Nada aqui abre GUI; e importado por tbh_panel.py.
 import os, sys, struct, subprocess, hashlib, json, re, time, ctypes, collections, difflib, threading, bisect
 from ctypes import wintypes
 
+# ===================== AUTO-UPDATE (via GitHub Releases) =====================
+VERSION="3.1"                                   # BUMPAR a cada release; o exe compara com a tag do 'releases/latest'
+GITHUB_REPO="matheusbranhann/tbh_bot"
+
+def _ver_tuple(s):
+    """'v3.1'/'3.10' -> (3,1)/(3,10) pra comparar versao ordinalmente."""
+    out=[]
+    for p in str(s or "").lstrip("vV").strip().split("."):
+        d="".join(ch for ch in p if ch.isdigit())
+        out.append(int(d) if d else 0)
+    return tuple(out) or (0,)
+
+def check_update(timeout=8):
+    """Consulta releases/latest do GitHub. Retorna {tag,url,size,notes} se houver versao MAIOR que VERSION,
+    senao None. So urllib (stdlib, ja usado pra precos Steam -> funciona no exe). Silencioso em falha de rede."""
+    try:
+        import urllib.request
+        req=urllib.request.Request("https://api.github.com/repos/%s/releases/latest"%GITHUB_REPO,
+                                   headers={"User-Agent":"tbh_bot-updater","Accept":"application/vnd.github+json"})
+        with urllib.request.urlopen(req,timeout=timeout) as r:
+            d=json.load(r)
+        tag=d.get("tag_name","")
+        if _ver_tuple(tag)>_ver_tuple(VERSION):
+            asset=next((a for a in d.get("assets",[]) if str(a.get("name","")).lower().endswith(".zip")),None)
+            if asset and asset.get("browser_download_url"):
+                return {"tag":tag,"url":asset["browser_download_url"],"size":asset.get("size",0),"notes":d.get("body","")}
+    except Exception:
+        pass
+    return None
+
+def download_update(url, progress=None, timeout=60):
+    """Baixa o zip do release e extrai TBH_Panel.exe pra <dir do exe>/TBH_Panel.new.exe.
+    progress(frac 0..1) opcional. Retorna (newexe, exe, exedir). So funciona no exe congelado."""
+    import urllib.request, zipfile, io
+    exe=sys.executable; exedir=os.path.dirname(exe)
+    req=urllib.request.Request(url,headers={"User-Agent":"tbh_bot-updater"})
+    buf=io.BytesIO()
+    with urllib.request.urlopen(req,timeout=timeout) as r:
+        total=int(r.headers.get("Content-Length") or 0); read=0
+        while True:
+            chunk=r.read(65536)
+            if not chunk: break
+            buf.write(chunk); read+=len(chunk)
+            if progress and total: progress(min(read/total,1.0))
+    with zipfile.ZipFile(io.BytesIO(buf.getvalue())) as z:
+        name=next(n for n in z.namelist() if n.lower().endswith("tbh_panel.exe"))
+        data=z.read(name)
+    if len(data)<10_000_000:                    # sanidade: o exe real e ~44MB; menor que isso = download torto
+        raise RuntimeError("exe baixado pequeno demais (%d bytes)"%len(data))
+    newexe=os.path.join(exedir,"TBH_Panel.new.exe")
+    with open(newexe,"wb") as f: f.write(data)
+    return newexe, exe, exedir
+
+_UPDATER_BAT=(
+    "@echo off\r\n"
+    "setlocal\r\n"
+    'set "EXE=%~1"\r\n'
+    'set "NEW=%~2"\r\n'
+    "set PID=%~3\r\n"
+    ":wait\r\n"
+    'tasklist /FI "PID eq %PID%" 2>nul | find "%PID%" >nul\r\n'
+    "if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto wait )\r\n"
+    ":movetry\r\n"
+    'move /y "%NEW%" "%EXE%" >nul 2>&1\r\n'      # espera o exe destravar (processo saiu); retenta se ainda preso
+    "if errorlevel 1 ( timeout /t 1 /nobreak >nul & goto movetry )\r\n"
+    'start "" "%EXE%"\r\n'                       # reabre o painel NOVO
+    'del "%~f0"\r\n')
+
+def launch_updater(newexe, exe, exedir):
+    """Escreve o .bat updater e o lanca DESACOPLADO. Ele espera este processo (PID) sair, troca o exe e reabre.
+    O chamador deve encerrar o painel logo apos (senao o move fica retentando ate ele fechar)."""
+    bat=os.path.join(exedir,"_tbh_update.bat")
+    with open(bat,"w",encoding="ascii") as f: f.write(_UPDATER_BAT)
+    DETACHED=0x00000008|0x00000200              # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(["cmd","/c",bat,exe,newexe,str(os.getpid())],cwd=exedir,
+                     creationflags=DETACHED,close_fds=True,
+                     stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+
 class MBI(ctypes.Structure):
     _fields_=[("BaseAddress",ctypes.c_void_p),("AllocationBase",ctypes.c_void_p),("AllocationProtect",ctypes.c_uint32),
               ("__a",ctypes.c_uint32),("RegionSize",ctypes.c_size_t),("State",ctypes.c_uint32),("Protect",ctypes.c_uint32),("Type",ctypes.c_uint32)]

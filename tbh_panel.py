@@ -142,6 +142,53 @@ class Panel:
             try: self.splash.destroy()
             except Exception: pass
         self._start_engine_thread()
+        self.root.after(3500, self._check_update_async)                     # checa update no GitHub ~3.5s apos abrir (thread, silencioso)
+
+    def _check_update_async(self):
+        if not getattr(sys,"frozen",False): return                          # auto-update so faz sentido no .exe congelado
+        def work():
+            try: info=C.check_update()
+            except Exception: info=None
+            if info:
+                try: self.root.after(0, lambda: self._show_update_banner(info))
+                except Exception: pass
+        threading.Thread(target=work,daemon=True).start()
+
+    def _show_update_banner(self, info):
+        self._upd_info=info
+        self.upd_lbl.configure(text="🔄  Atualização disponível: %s  (você tem v%s)"%(info["tag"], C.VERSION))
+        self.upd_btn.configure(state="normal", text="Atualizar agora")
+        try: self.upd_bar.pack(fill="x", padx=14, pady=(4,2), before=self.tabs)   # logo abaixo do header, acima das abas
+        except Exception: self.upd_bar.pack(fill="x", padx=14, pady=(4,2))
+        self.log("Atualização %s disponível — clique em 'Atualizar agora' no topo."%info["tag"])
+
+    def _start_update(self):
+        info=getattr(self,"_upd_info",None)
+        if not info: return
+        if not getattr(sys,"frozen",False):
+            self.log("auto-update só roda no .exe (aqui é o .py de desenvolvimento)."); return
+        self.upd_btn.configure(state="disabled", text="Baixando… 0%")
+        def prog(frac):
+            try: self.root.after(0, lambda: self.upd_btn.configure(text="Baixando… %d%%"%int(frac*100)))
+            except Exception: pass
+        def work():
+            try:
+                newexe,exe,exedir=C.download_update(info["url"], progress=prog)
+                C.launch_updater(newexe,exe,exedir)                         # .bat espera este processo sair, troca o exe e reabre
+                self.root.after(0, self._finish_update)
+            except Exception as e:
+                self.root.after(0, lambda: (self.upd_btn.configure(state="normal",text="Tentar de novo"),
+                                            self.log("update falhou: %s"%e)))
+        threading.Thread(target=work,daemon=True).start()
+
+    def _finish_update(self):
+        self.log("baixado ✓ — fechando pra trocar o exe e reabrir sozinho…")
+        try:
+            if self.overlay_proc and self.overlay_proc.poll() is None: self.overlay_proc.terminate()
+        except Exception: pass
+        try: self.root.update(); self.root.destroy()
+        except Exception: pass
+        os._exit(0)                                                         # sai JA pra liberar o exe pro updater trocar
 
     def log(self,m):
         self._logbuf.append(time.strftime("%H:%M:%S ")+m); self._logbuf=self._logbuf[-200:]
@@ -182,6 +229,15 @@ class Panel:
         self.conn=ctk.CTkLabel(top,text="● connecting…",text_color=SUB,font=MONO(11)); self.conn.pack(side="right",pady=4)
         # hairline under header
         ctk.CTkFrame(self.root,fg_color=STROKE,height=1,corner_radius=0).pack(fill="x",padx=18,pady=(0,4))
+        # --- banner de UPDATE (criado escondido; _show_update_banner o exibe se houver versao nova no GitHub) ---
+        self.upd_bar=ctk.CTkFrame(self.root,fg_color=CARD2,corner_radius=8,border_width=1,border_color=ACC)
+        self.upd_lbl=ctk.CTkLabel(self.upd_bar,text="",text_color=FG,font=F(12,"bold"),anchor="w")
+        self.upd_lbl.pack(side="left",padx=(14,8),pady=8)
+        ctk.CTkButton(self.upd_bar,text="✕",width=30,command=lambda:self.upd_bar.pack_forget(),
+                      fg_color="transparent",hover_color=STROKE,text_color=SUB,font=F(13)).pack(side="right",padx=(0,6),pady=6)
+        self.upd_btn=ctk.CTkButton(self.upd_bar,text="Atualizar agora",width=150,command=self._start_update,
+                                   fg_color=ACC,hover_color=ACC_H,text_color=ACC_TXT,font=F(12,"bold"))
+        self.upd_btn.pack(side="right",padx=(4,4),pady=6)
         # tabs
         self.tabs=ctk.CTkTabview(self.root,fg_color=W_BG,segmented_button_fg_color=SURF,
                                  segmented_button_selected_color=CARD2,segmented_button_selected_hover_color=STROKE,
