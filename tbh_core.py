@@ -14,7 +14,7 @@ import os, sys, struct, subprocess, hashlib, json, re, time, ctypes, collections
 from ctypes import wintypes
 
 # ===================== AUTO-UPDATE (via GitHub Releases) =====================
-VERSION="3.2"                                   # BUMPAR a cada release; o exe compara com a tag do 'releases/latest'
+VERSION="3.4"                                   # BUMPAR a cada release; o exe compara com a tag do 'releases/latest'
 GITHUB_REPO="matheusbranhann/taskbarhero-bot"
 
 def _ver_tuple(s):
@@ -220,6 +220,7 @@ STAGE_FIELDS={"Act":0x48,"StageNo":0x4C,"StageLevel":0x50,"WaveAmount":0x54,
  "BossExpMultiplier":0x88,"BossHpMultiplier":0x8C,"BossScale":0x90,
  "SoulStoneItemKey":0x94,"SoulStoneAmount":0x98}
 INV_PSD_OFF=0x28; INV_LIST_OFF=0xA8; ITEMSAVE_KEY_OFF=0x10   # bau->PlayerSaveData->List<ItemSaveData>
+RUNE_LIST_OFF=0x80          # PlayerSaveData.RuneSaveData (List<RuneSaveData{RuneKey@0x10,Level@0x14}>); prefira self.sym["PlayerSaveData.RuneSaveData"]
 SYNTH_MIN_LVL=65; SYNTH_MAX_LVL=80   # LEVEL GATE synthesis: so funde se besu.MaxResultLevel>=65 (dropdown do cubo em ~65-80); nivel baixo nao funde
 
 AOB_GODMODE="57 48 83 EC 50 80 3D ?? ?? ?? ?? ?? 41 0F ?? ?? 48 8B DA"
@@ -365,6 +366,12 @@ def _extract_from_dump(ddir):
         if real: out["iuw"]=real
     # === mapa/navegacao de estagio (ancora StageNode) — opcional: se falhar, o resto do painel segue ===
     try: out.update(_stage_anchors(ddir))
+    except Exception: pass
+    # === offsets de campo/metodo do CUBO/ITEM/STAGE/SAVE + cobertura maxima (auto-atualizam no re-dump) ===
+    try:
+        da=_data_anchors(ddir)
+        for k,v in da.items():
+            if v is not None: out[k]=v          # nao sobrescreve com None (mantem o extraido antes)
     except Exception: pass
     return out
 
@@ -566,7 +573,90 @@ def _stage_anchors(ddir):
         raise AssertionError("jgq sem a constante 1101 — ancora suspeita")
     return out
 
-_EXTRACT_VER=4   # BUMPAR sempre que a extracao mudar: invalida os caches antigos. Sem isso um offset
+# classes de DADOS cujos NOMES DE CAMPO sao preservados (nao ofuscados) -> extraio TODOS os campos por
+# nome como "<Classe>.<Campo>" = offset. Cobertura maxima: mesmo campos que ainda nao usamos ficam
+# disponiveis e auto-atualizam. (as *InfoData/SaveData sao desserializadas por nome -> nomes estaveis.)
+_DATA_CLASSES=["StageInfoData","ItemInfoData","SynthesisRecipeInfoData","CraftingRecipeInfoData",
+    "CommonSaveData","PlayerSaveData","ItemSaveData","InventorySaveData","StashSaveData","HeroSaveData",
+    "AccountSaveData","SettingSaveData","HeroInfoData","GearInfoData","MonsterInfoData","SkillInfoData",
+    "GradeInfoData","DropInfoData","SynthesisDropInfoData","CurrencyInfoData","PetInfoData","AttributeInfoData",
+    "GearTypeInfoData","ItemLevelScaleInfoData","ItemTypeScaleInfoData","GearTypeScaleInfoData","CubeRecipeInfoData",
+    "ExtractionCostInfoData","CubeInData"]
+
+def _is_clear_name(nm):
+    """nome de campo 'em claro' (PascalCase/camelCase/underscore) vs ofuscado (token curto minusculo)."""
+    return bool(re.search(r'[A-Z]',nm) or "_" in nm) and not re.fullmatch(r'[a-z]{1,6}\d?',nm)
+
+def _data_anchors(ddir):
+    """Extrai da DLL (dump.cs + script.json), de forma ESTAVEL a ofuscacao, todos os offsets de campo/
+    metodo que estavam hardcoded no codigo. Auto-atualiza no re-dump. Nunca ancora em nome ofuscado:
+    classes de dados = por NOME de campo (preservado); uu.Cube (campos ofuscados) = por TIPO+ordem."""
+    out={}
+    try:
+        classes=_a_parse_dump(os.path.join(ddir,"dump.cs"))
+        byname={k.name:k for k in classes}
+    except Exception:
+        return out
+    try:
+        sj=json.load(open(os.path.join(ddir,"script.json"),encoding="utf-8"))
+        ti=lambda n: next((m["Address"] for m in sj["ScriptMetadata"] if m["Name"]==n), None)
+    except Exception:
+        ti=lambda n: None
+    # ---------- uu.Cube (campos ofuscados -> por TIPO estatico + ordem) ----------
+    cube=byname.get("uu.Cube")
+    def cbt(t,idx=0):
+        if not cube: return None
+        fs=[f[2] for f in sorted(cube.fields,key=lambda x:x[2]) if f[0]==t and f[3]]
+        return fs[idx] if idx<len(fs) else None
+    for sym,typ,idx in (("cube_grade","EGradeType",0),("cube_type","EItemSynthesisType",0),
+                        ("cube_inlist","List<CubeInData>",0),("cube_recipe","SynthesisRecipeInfoData",0),
+                        ("cube_bers","Dictionary<ERecipeType, List<uw>>",0),("cube_beru","Dictionary<ERecipeType, uw>",0),
+                        ("cube_active","uw",0),("cube_lvrecipe","uw",1),("cube_busy","bool",0),
+                        ("cube_resultevt","Action<ECubeSynthesisResult>",0)):
+        v=cbt(typ,idx)
+        if v is not None: out[sym]=v
+    # ---------- ilx = 1o (menor RVA) static void(ERecipeType) na Cube ----------
+    if cube:
+        cand=sorted(rva for rva,sig in cube.methods
+                    if (p:=_a_sig(sig)) and p[0] and p[1]=="void" and p[3]==["ERecipeType"])
+        if cand: out["ilx"]=cand[0]
+    # ---------- UIManager: typeinfo + ui_main (nome preservado) ----------
+    v=ti("nq<UIManager>_TypeInfo")
+    if v: out["uimgr_ti"]=v
+    uim=byname.get("UIManager")
+    if uim:
+        for typ,nm,off,st in uim.fields:
+            if nm=="ui_main" and not st: out["uimain"]=off
+    # ---------- offsets nomeados que o codigo usa (por nome, classes-chave) ----------
+    def fld(cn,fieldname):
+        k=byname.get(cn)
+        return next((off for typ,nm,off,st in k.fields if nm==fieldname and not st),None) if k else None
+    NAMED={"recipe_minlvl":("SynthesisRecipeInfoData","MinResultLevel"),
+           "recipe_maxlvl":("SynthesisRecipeInfoData","MaxResultLevel"),
+           "iteminfo_type":("ItemInfoData","ITEMTYPE"),"iteminfo_grade":("ItemInfoData","GRADE"),
+           "iteminfo_synth":("ItemInfoData","ItemSynthesisType"),"iteminfo_level":("ItemInfoData","Level"),
+           "psd_common_off":("PlayerSaveData","commonSaveData"),
+           "commonsave_usestorage":("CommonSaveData","useStorage"),
+           "commonsave_curstage":("CommonSaveData","currentStageKey"),
+           "commonsave_maxstage":("CommonSaveData","maxCompletedStage"),
+           "itemsave_key":("ItemSaveData","ItemKey"),"itemsave_uid":("ItemSaveData","ItemUniqueId")}
+    for sym,(cn,fn) in NAMED.items():
+        v=fld(cn,fn)
+        if v is not None: out[sym]=v
+    # ---------- COBERTURA MAXIMA: todos os campos em claro das classes de dados ----------
+    for cn in _DATA_CLASSES:
+        k=byname.get(cn)
+        if not k: continue
+        for typ,nm,off,st in k.fields:
+            if not st and _is_clear_name(nm): out["%s.%s"%(cn,nm)]=off
+    return out
+
+# handlers de UI que NAO sao pinaveis por assinatura estatica (dezenas de void X() vazios em UI_Main/
+# UIManager). Ficam por build ate haver resolucao ao vivo; na build atual vem daqui. Se o jogo atualizar
+# e nao estiverem aqui, o auto-fuse so nao AUTO-ABRE o cubo (degradacao graciosa) — o resto auto-resolve.
+_KNOWN_UI_HANDLERS={"c824ed7a2bb1":{"eby":0x839BB0,"hgr":0xC362A0}}
+
+_EXTRACT_VER=5   # BUMPAR sempre que a extracao mudar: invalida os caches antigos. Sem isso um offset
                  # errado fica gravado no disco e o fix nao chega em quem ja rodou o painel.
 _CRIT_SYMS=("gra","upd","llx","iw","ra_class","ilo","ipu","imx","inf","ili","iog","ioa","ima","iuw","izb","inv_slots_off","stash_off")
 def _offsets_ok(got):
@@ -618,6 +708,7 @@ def resolve_symbols(log=lambda m:None):
     last={}
     for attempt in range(3):                            # retry: falhas transientes do dumper
         got=_redump()
+        got.update(_KNOWN_UI_HANDLERS.get(h,{}))   # eby/hgr: nao pinaveis por assinatura -> por build (degrada gracioso se faltar)
         if _offsets_ok(got):
             got["_ver"]=_EXTRACT_VER
             try: json.dump(got,open(cf,"w"))
@@ -722,6 +813,7 @@ class Engine:
         self._itm_thr=None  # (legado)
         self._auto_thr=None # thread UNICA do loop de automacao (caixa->stash->fuse)
         self._wd_thr=None   # thread do WATCHDOG (mantem o jogo aberto)
+        self._wd_hold=False # True durante o restart: o tick() attacha mas NAO aplica nada (start limpo)
         self._disp_lock=threading.RLock()  # serializa comandos no dispatcher
         self._rc_lock=threading.RLock()    # serializa _remote_call (scratch compartilhado)
     # ---- attach ----
@@ -737,6 +829,7 @@ class Engine:
                     self.sym=resolve_symbols(self.log)
                     self.log("attach PID=%d base=%#x"%(pm.process_id,ga.lpBaseOfDll))
                 self.pm=pm; self.base=ga.lpBaseOfDll; self.size=ga.SizeOfImage
+                self._load_offsets()                     # offsets de campo (cubo/item) do self.sym, com fallback c824
                 if not self.sym.get("cube_slot") and self.sym.get("ilo"):   # build novo: resolve cube_slot ao vivo
                     cs=self._resolve_cube_slot()
                     if cs: self.sym["cube_slot"]=cs; self.log("cube_slot resolved live: %#x"%cs)
@@ -744,6 +837,17 @@ class Engine:
         except Exception:
             self.pm=None; self.pid=None
         return False
+    def _load_offsets(self):
+        """Offsets de campo do CUBO/ITEM lidos do self.sym (auto-extraidos da DLL por _data_anchors);
+        fallback = valores da build c824. Assim, quando o jogo atualiza, o re-dump traz os offsets novos
+        e o codigo passa a usa-los SEM hardcode (era o pedido: 'se o jogo atualizar, atualize sozinho')."""
+        g=self.sym.get
+        self.OFF={"inlist":g("cube_inlist",0x100),"active":g("cube_active",0x140),"busy":g("cube_busy",0x150),
+                  "grade":g("cube_grade",0xC8),"beru":g("cube_beru",0xF0),"bers":g("cube_bers",0xE0),
+                  "recipe":g("cube_recipe",0x240),"cubetype":g("cube_type",0x254),"lvrecipe":g("cube_lvrecipe",0x258),
+                  "it_type":g("iteminfo_type",0x34),"it_grade":g("iteminfo_grade",0x38),
+                  "it_synth":g("iteminfo_synth",0x48),"it_level":g("iteminfo_level",0x6C)}
+        self.SYNTH_TYPE_OFF=self.OFF["cubetype"]; self.SYNTH_GRADE_OFF=self.OFF["grade"]; self.SYNTH_LVRECIPE_OFF=self.OFF["lvrecipe"]
     def _resolve_cube_slot(self):
         """cube_slot = RVA do static que segura o singleton uw.Cube. NAO vem do dump (endereco de
         runtime), entao resolve AO VIVO desmontando ilo: 'mov rXX,[rip+disp]' (o static) seguido de
@@ -891,38 +995,61 @@ class Engine:
         if self._wd_thr and self._wd_thr.is_alive(): return
         self._wd_thr=threading.Thread(target=self._watchdog_loop,daemon=True); self._wd_thr.start()
     def _watchdog_loop(self):
-        """Se o jogo fechar: espera GRACE s e reabre pela Steam. NAO re-aplica nada aqui — o tick()
-        do painel re-attacha sozinho (PID novo zera cache/sh/abx) e re-aplica TUDO no ciclo seguinte:
-        ACTk, God, Hitkill, stats, stage, speedhack e as automacoes (auto-box/stash/fuse)."""
-        GRACE=15; STARTUP=90      # 15s de tolerancia; ate ~3min esperando o jogo subir
+        """AUTO-RESTART. Quando o jogo FECHA por completo: reabre na hora, com START LIMPO (nada aplicado
+        no boot), fecha o botao Close do popup (tolerante a erro), le o estagio que o usuario esta, RELIGA
+        todas as opcoes e REENTRA no estagio. A config do usuario fica SALVA no want o tempo todo; o
+        _wd_hold so impede o tick() de aplicar durante o boot (por isso o jogo inicia limpo)."""
+        STARTUP=120               # ate ~4min esperando o jogo subir
+        last_stage=None
         while self.want.get("watchdog"):
             try:
                 if self.pm and self._proc_alive():
-                    time.sleep(2); continue                       # jogo vivo: so observa
-                self.log("watchdog: jogo fechado — reabrindo em %ds…"%GRACE)
-                back=False
-                for _ in range(GRACE):                            # tolerancia (pode ser restart do proprio user)
-                    if not self.want.get("watchdog"): return
-                    time.sleep(1)
-                    if self.pm and self._proc_alive(): back=True; break   # o tick() re-attachou sozinho
-                if back:
-                    self.log("watchdog: jogo voltou sozinho — re-aplicando"); continue
-                if not self.want.get("watchdog"): return
+                    self._wd_hold=False                           # jogo vivo: opera normal
+                    try:
+                        cur=self.stage_progress()[1]              # rastreia o estagio atual (fallback p/ o restart)
+                        if cur: last_stage=cur
+                    except Exception: pass
+                    time.sleep(2); continue
+                # ===================== JOGO FECHOU =====================
+                self._wd_hold=True                                # 1) DESLIGA tudo p/ start limpo (config segue salva no want)
+                self.log("watchdog: jogo fechou — start limpo (config salva, nada aplicado no boot)")
+                gone=0                                            # 2) espera o exe SUMIR TOTALMENTE, ai reabre na hora
+                while self._proc_alive():
+                    if not self.want.get("watchdog"): self._wd_hold=False; return
+                    time.sleep(0.5); gone+=1
+                    if gone>240: break                            # trava de seguranca (~2min)
+                time.sleep(1)                                     # garante que sumiu de vez
+                if not self.want.get("watchdog"): self._wd_hold=False; return
+                self.log("watchdog: exe sumiu totalmente — abrindo o jogo")
                 self.launch_game()
-                self.log("watchdog: abrindo o jogo pela Steam…")
-                up=False
-                for _ in range(STARTUP):                          # espera o tick() re-attachar (sem re-lancar)
-                    if not self.want.get("watchdog"): return
+                up=False                                          # 3) espera o jogo SUBIR (o tick() re-attacha)
+                for _ in range(STARTUP):
+                    if not self.want.get("watchdog"): self._wd_hold=False; return
                     time.sleep(2)
                     if self.pm and self._proc_alive(): up=True; break
-                if up:
-                    self.log("watchdog: jogo aberto — re-aplicando tudo (ACTk/God/Hitkill/stats/automacoes)")
-                    # o OFFLINE REWARDS aparece ~13s depois de abrir e TRAVA o jogo ate fechar
-                    self.close_offline_popup(window=120)
-                else:
-                    self.log("watchdog: o jogo nao subiu em ~3min — tentando de novo")
+                if not up:
+                    self.log("watchdog: jogo nao subiu — tentando de novo"); self._wd_hold=False; continue
+                time.sleep(3)                                     # deixa carregar
+                try: self.close_offline_popup(window=120)         # 4) fecha o Close do popup — TOLERANTE (se der erro, prossegue)
+                except Exception as e: self.log("watchdog: fechar popup deu erro (%s) — prosseguindo"%e)
+                try: cur=self.stage_progress()[1] or last_stage   # 5) le o estagio que o usuario esta (save; fallback = ultimo vivo)
+                except Exception: cur=last_stage
+                self._wd_hold=False                               # 6) RELIGA tudo (libera o tick -> re-aplica ACTk/God/stats/automacoes do want)
+                self.log("watchdog: religando todas as opcoes")
+                time.sleep(3)                                     # deixa o tick re-aplicar e instalar o dispatcher
+                if cur:                                           # 7) REENTRA no estagio com tudo ligado
+                    try:
+                        if not self.abx: self._install_dispatch() # garante a main-thread p/ entrar
+                        tbl=self.stage_table() or {}
+                        is_boss=(tbl.get(cur,{}).get("type")==1)
+                        ok=self.enter_boss(cur) if is_boss else self.goto_stage(cur)
+                        self.log("watchdog: reentrou no estagio %s (%s)=%s"%(cur,"boss" if is_boss else "normal",ok))
+                    except Exception as e:
+                        self.log("watchdog: reentrar no estagio falhou (%s)"%e)
             except Exception:
+                self._wd_hold=False
                 time.sleep(3)
+        self._wd_hold=False                                       # watchdog desligado -> libera o tick
     # ---- mem helpers ----
     def rb(self,a,n):
         try: return self.pm.read_bytes(a,n)
@@ -1155,6 +1282,135 @@ class Engine:
                 ik=self.u32(it+ITEMSAVE_KEY_OFF)
                 if ik and 100000<=ik<=999999: inv[ik]+=1
             return inv
+
+    # ============================= RUNES (tabela Runes) — 100% client-side =============================
+    def _il2str(self, ptr):
+        """System.String IL2CPP (len@0x10, chars UTF-16LE @0x14)."""
+        if not ptr or ptr < 0x10000: return None
+        ln = self.u32(ptr + 0x10)
+        if ln is None or ln <= 0 or ln > 300: return None
+        raw = self.rb(ptr + 0x14, ln * 2)
+        if not raw: return None
+        try:
+            s = raw.decode('utf-16-le', 'replace')
+            return s if all(31 < ord(c) < 0x3000 or c in ' /-_.' for c in s) else None
+        except Exception:
+            return None
+
+    def read_rune_defs(self, force=False):
+        """{key:{name,max,next:[keys],icon}} das RuneInfoData (scan da klass). Cacheado (dado estatico)."""
+        if not force and getattr(self, "_rune_defs", None): return self._rune_defs
+        with self.lock:
+            if (not self.pm or not self._proc_alive()): self.attach()
+            klass = self._klass_by_name("TaskbarHero.Data", "RuneInfoData")
+            if not klass: return None
+            kp = struct.pack("<Q", klass); defs = {}
+            for base, size in self._mem_regions((0x04, 0x40)):
+                d = self.rb(base, size)
+                if not d: continue
+                j = d.find(kp)
+                while j >= 0:
+                    if j % 8 == 0:
+                        a = base + j
+                        key = self.u32(a + 0x30); mx = self.u32(a + 0x34)
+                        nm = self._il2str(self.u64(a + 0x38))
+                        if nm and key is not None and 0 <= key < 20000000:
+                            nxt = []
+                            for fld in (0x40, 0x48):
+                                s = self._il2str(self.u64(a + fld))
+                                if s: nxt += [int(t) for t in s.split() if t.isdigit()]
+                            ic = self._il2str(self.u64(a + 0x58)) or ""
+                            defs[key] = {"name": nm.replace("RuneName_", ""), "max": (mx or 1), "next": nxt, "icon": ic}
+                    j = d.find(kp, j + 8)
+            if defs: self._rune_defs = defs
+            return defs or None
+
+    def _player_psd(self):
+        """(PSD, rune_off) com lista de runa VALIDA — robusto contra bau-fantasma pos-reload."""
+        po = self.sym.get("inv_psd_off", INV_PSD_OFF)
+        ro = self.sym.get("PlayerSaveData.RuneSaveData", RUNE_LIST_OFF)
+        bau = self._resolve_bau()
+        if bau:
+            psd = self.u64(bau + po)
+            if self.vptr(psd):
+                lst = self.u64(psd + ro); cnt = self.u32(lst + 0x18) if lst else None
+                if cnt and 50 < cnt < 2000: return psd, ro
+        klass = None
+        kti = self.sym.get("inv_klass_ti")
+        if kti: klass = self.u64(self.base + kti)
+        if not klass and bau: klass = self.u64(bau)
+        if not klass: return None, ro
+        kp = struct.pack("<Q", klass)
+        for base, size in self._mem_regions((0x04, 0x40)):
+            d = self.rb(base, size)
+            if not d: continue
+            j = d.find(kp)
+            while j >= 0:
+                if j % 8 == 0:
+                    psd = self.u64(base + j + po)
+                    if self.vptr(psd):
+                        lst = self.u64(psd + ro); cnt = self.u32(lst + 0x18) if lst else None
+                        if cnt and 50 < cnt < 2000: return psd, ro
+                j = d.find(kp, j + 8)
+        return None, ro
+
+    def read_runes(self):
+        """{key:level} do RuneSaveData. None se desatachado/nao resolveu."""
+        with self.lock:
+            if (not self.pm or not self._proc_alive()): self.attach()
+            psd, ro = self._player_psd()
+            if not psd: return None
+            lst = self.u64(psd + ro)
+            arr = self.u64(lst + 0x10) if lst else None; size = self.u32(lst + 0x18) if lst else None
+            if not arr or size is None or not (0 <= size < 100000): return None
+            out = {}
+            for i in range(size):
+                r = self.u64(arr + 0x20 + i * 8)
+                if r: out[self.u32(r + 0x10)] = self.u32(r + 0x14)
+            return out
+
+    def set_rune(self, key, level):
+        """Seta o Level de UMA runa (client-side). CLAMP DURO [0..max] — NUNCA passa do teto
+        (over-max crasha o load: NRE em RuneNode.mav). Retorna o nivel aplicado, ou None."""
+        defs = self.read_rune_defs() or {}
+        mx = int(defs.get(key, {}).get("max", 1) or 1)
+        level = max(0, min(int(level), mx))
+        with self.lock:
+            psd, ro = self._player_psd()
+            if not psd: return None
+            lst = self.u64(psd + ro)
+            arr = self.u64(lst + 0x10) if lst else None; size = self.u32(lst + 0x18) if lst else None
+            if not arr or not size: return None
+            for i in range(size):
+                r = self.u64(arr + 0x20 + i * 8)
+                if r and self.u32(r + 0x10) == key:
+                    self.wb(r + 0x14, struct.pack('<i', level)); return level
+            return None
+
+    def unlock_runes(self, keys=None, to_max=True):
+        """Desbloqueia varias numa passada. keys=None -> TODAS. to_max -> nivel maximo (senao 1).
+        Retorna quantas mudaram. Clamp por-runa (nunca passa do teto)."""
+        defs = self.read_rune_defs()
+        if defs is None: return 0
+        keyset = set(keys) if keys is not None else set(defs.keys())
+        with self.lock:
+            psd, ro = self._player_psd()
+            if not psd: return 0
+            lst = self.u64(psd + ro)
+            arr = self.u64(lst + 0x10) if lst else None; size = self.u32(lst + 0x18) if lst else None
+            if not arr or not size: return 0
+            n = 0
+            for i in range(size):
+                r = self.u64(arr + 0x20 + i * 8)
+                if not r: continue
+                k = self.u32(r + 0x10)
+                if k in keyset:
+                    mx = int(defs.get(k, {}).get("max", 1) or 1)
+                    tgt = max(0, min(mx if to_max else 1, mx))
+                    if self.u32(r + 0x14) != tgt:
+                        self.wb(r + 0x14, struct.pack('<i', tgt)); n += 1
+            return n
+
     # ---- SPEEDHACK de relogio (hook em QueryPerformanceCounter, estilo Cheat Engine) ----
     def _qpc_addr(self):
         k=ctypes.windll.kernel32
@@ -1969,7 +2225,7 @@ class Engine:
         """objeto uw da recipe `rtype` (ERecipeType) via beru @cube_sf+0xF0 = Dictionary<ERecipeType,uw>."""
         sf=self._cube_sf()
         if not sf: return None
-        d=self.u64(sf+0xF0)
+        d=self.u64(sf+self.OFF["beru"])
         if not self.vptr(d): return None
         ent=self.u64(d+0x18); n=self.u32(d+0x20)
         if not self.vptr(ent) or not n or n>64: return None
@@ -2024,12 +2280,14 @@ class Engine:
     #   bete @0x258 = a recipe (uw) do TIER de nivel ATUAL. **inf(uw) @cmd6 SETA isto** = e assim que se muda o nivel.
     # Funcoes (dispatcher): ilo/cmd3=iln(EItemSynthesisType) seleciona o TIPO · ili/cmd7=ilh(EGradeType) o GRADE ·
     # inf/cmd6=ine(uw) seleciona o TIER de nivel. ATENCAO: trocar o TIPO (ilo) RESETA o nivel -> re-chamar _synth_set_lv6580.
-    SYNTH_TYPE_OFF=0x254; SYNTH_GRADE_OFF=0xC8; SYNTH_LVRECIPE_OFF=0x258
+    SYNTH_TYPE_OFF=0x254; SYNTH_GRADE_OFF=0xC8; SYNTH_LVRECIPE_OFF=0x258   # defaults c824; _load_offsets sobrescreve do sym
+    OFF={"inlist":0x100,"active":0x140,"busy":0x150,"grade":0xC8,"beru":0xF0,"bers":0xE0,"recipe":0x240,
+         "cubetype":0x254,"lvrecipe":0x258,"it_type":0x34,"it_grade":0x38,"it_synth":0x48,"it_level":0x6C}
     def _synth_recipes(self):
         """As recipes de SYNTHESIS (os tiers de nivel do dropdown). Ultima = Lv.65~80."""
         sf=self._cube_sf()
         if not sf: return []
-        d=self.u64(sf+0xE0)
+        d=self.u64(sf+self.OFF["bers"])
         if not self.vptr(d): return []
         ent=self.u64(d+0x18); n=self.u32(d+0x20); syn=0
         for i in range(n or 0):
@@ -2069,7 +2327,7 @@ class Engine:
     def _cube_is_open(self):
         """cubo aberto = recipe ativa (bese@sf+0x140 != 0)."""
         sf=self._cube_sf()
-        return bool(sf and self.vptr(self.u64(sf+0x140)))
+        return bool(sf and self.vptr(self.u64(sf+self.OFF["active"])))
     def _open_cube(self, timeout=4.0):
         """Abre o cubo reproduzindo o clique em button_Cube: eby(uiMain) na main-thread. Client-side,
         sem call server-side (confirmado). eby tem as guardas do clique real: so abre no MAIN screen sem
@@ -2100,7 +2358,7 @@ class Engine:
         if not ilx: return False
         self._dispatch_call(self.base+ilx, argI=rtype); time.sleep(0.2)
         sf=self._cube_sf()
-        return bool(sf and self.u64(sf+0x140)==self._cube_recipe(rtype))
+        return bool(sf and self.u64(sf+self.OFF["active"])==self._cube_recipe(rtype))
     def _do_alchemy(self, level_cap=55, dry=False, max_batch=30, one=False):
         """Vende (alchemy) equipamento/acessorio de nivel <= level_cap. O BOT ABRE O CUBO sozinho.
         Sequencia validada: abrir(eby) -> selecionar ALCHEMY(ilx 0) -> ioa(itens) -> imx(vende) -> fechar.
@@ -2148,7 +2406,7 @@ class Engine:
     def _cube_uids(self, sf):
         """uniqueIds dos itens ATUALMENTE no cubo (berw = List<CubeInData> @sf+0x100)."""
         try:
-            lst=self.u64(sf+0x100)
+            lst=self.u64(sf+self.OFF["inlist"])
             if not self.vptr(lst): return set()
             arr=self.u64(lst+0x10); n=self.u32(lst+0x18)
             if not self.vptr(arr) or not n or n>500: return set()
@@ -2210,19 +2468,20 @@ class Engine:
         # mandou os itens pro BAU, ele enchia <9 e nao fundia.
         try:
             psd=self.u64(self._resolve_bau()+self.sym.get("inv_psd_off",INV_PSD_OFF))
-            if self.vptr(psd): self.wb(psd+0x60,b"\x01")
+            cs=self.u64(psd+self.sym.get("psd_common_off",0x10))              # PlayerSaveData.commonSaveData
+            if self.vptr(cs): self.wb(cs+self.sym.get("commonsave_usestorage",0x60),b"\x01")   # useStorage=Include-Stash (psd+0x60 era heroSaveDatas = BUG)
         except Exception: pass
         if not self._synth_set_lv6580(): self._close_cube(); return False   # Synthesis + Lv.65~80
         self._synth_set_type(tgt)                                          # tipo (Equipment/Accessory/Material)
         self._synth_set_lv6580()                                          # trocar o tipo RESETA o nivel -> re-por 65~80
-        self.wb(sf+0xC8, struct.pack("<i",0x7F))                          # SENTINELA no berp: se o auto-fill NAO reescrever (medo do review), fica >teto -> pula (fail-safe)
+        self.wb(sf+self.OFF["grade"], struct.pack("<i",0x7F))                          # SENTINELA no berp: se o auto-fill NAO reescrever (medo do review), fica >teto -> pula (fail-safe)
         self._dispatch(4); time.sleep(0.25)                               # AUTO FILL
         self._synth_set_lv6580()
         if self._cube_realn(sf)<9:                                        # se re-por o nivel esvaziou -> re-arma o sentinela e enche de novo
-            self.wb(sf+0xC8, struct.pack("<i",0x7F)); self._dispatch(4); time.sleep(0.25)
+            self.wb(sf+self.OFF["grade"], struct.pack("<i",0x7F)); self._dispatch(4); time.sleep(0.25)
         n=self._cube_realn(sf)
         if n<9: self._close_cube(); return False                          # nao encheu 9 -> aborta
-        fg=self.u32(sf+0xC8)                                              # berp = grade REAL que o auto-fill enfiou (provado ao vivo 3x: ele reescreve com o grade posto, ate sobre o sentinela)
+        fg=self.u32(sf+self.OFF["grade"])                                              # berp = grade REAL que o auto-fill enfiou (provado ao vivo 3x: ele reescreve com o grade posto, ate sobre o sentinela)
         if fg is None or not (0<=fg<=maxg):                               # TETO (fail-safe): so funde grade VALIDO 0..teto; sentinela(0x7F)/negativo/lixo/stale -> pula
             self.cache.setdefault("synth_block",{})[tgt]=time.time()+20   # anti-livelock: o auto-fill so acha grade>teto p/ este tipo -> nao reabrir por 20s
             self._close_cube(); return False
@@ -2328,13 +2587,13 @@ class Engine:
     def _synth_busy(self):
         sf=self._cube_sf()
         if not sf: return True
-        b=self.rb(sf+0x150,1); return (not b) or b[0]!=0        # [model+0x150]!=0 = ocupado
+        b=self.rb(sf+self.OFF["busy"],1); return (not b) or b[0]!=0        # [model+0x150]!=0 = ocupado
     def _synth_ux(self):
         """Ponteiro do objeto-recipe 'ux' de SYNTHESIS (bero[1] em Dict<ERecipeType,ux>@MODEL+0xF0).
         imx roteia por bery.jmm(); preciso setar bery=esse ux (via inf) pra ir pra synthesis."""
         sf=self._cube_sf()
         if not sf: return 0
-        bero=self.u64(sf+0xF0)
+        bero=self.u64(sf+self.OFF["beru"])
         if not self.vptr(bero): return 0
         ent=self.u64(bero+0x18); cnt=self.u32(bero+0x20)
         if not ent or cnt is None: return 0
@@ -2346,7 +2605,7 @@ class Engine:
         """Nº de ENTRADAS na List<CubeInData> @ model+0x100 (= slots, nao itens reais)."""
         sf=self._cube_sf()
         if not sf: return 0
-        lst=self.u64(sf+0x100)
+        lst=self.u64(sf+self.OFF["inlist"])
         return (self.u32(lst+0x18) or 0) if self.vptr(lst) else 0
     def _s32(self, a):
         x=self.rb(a,4)
@@ -2356,7 +2615,7 @@ class Engine:
         """(MinResultLevel, MaxResultLevel) do recipe atual (besu@0x240). Result level da fusao.
         Recipe.MinResultLevel@0x3C, MaxResultLevel@0x40. (0,0) se sem recipe."""
         sf=sf or self._cube_sf()
-        besu=self.u64(sf+0x240) if sf else 0
+        besu=self.u64(sf+self.OFF["recipe"]) if sf else 0
         if not self.vptr(besu): return (0,0)
         return (self._s32(besu+0x3c), self._s32(besu+0x40))
     def _cube_realn(self, sf=None):
@@ -2364,7 +2623,7 @@ class Engine:
         (slot vazio tem CubeDataChange@0x10 nao-nulo mas bfbk@0x18 nulo -> nao contar +0x10!)"""
         sf=sf or self._cube_sf()
         if not sf: return 0
-        lst=self.u64(sf+0x100)
+        lst=self.u64(sf+self.OFF["inlist"])
         if not self.vptr(lst): return 0
         n=self.u32(lst+0x18) or 0; arr=self.u64(lst+0x10); c=0
         for i in range(min(n,12)):
@@ -2383,7 +2642,7 @@ class Engine:
         try:
             p=self._remote_call(self.base+izb, [int(key)])
             if not p or not self.vptr(p): cache[key]=None; return None
-            info=(self.u32(p+0x34), self.u32(p+0x38), self.u32(p+0x48), self._s32(p+0x6C))
+            info=(self.u32(p+self.OFF["it_type"]), self.u32(p+self.OFF["it_grade"]), self.u32(p+self.OFF["it_synth"]), self._s32(p+self.OFF["it_level"]))
             g,st=info[1],info[2]
             if g is None or g>10 or st is None or st>3: info=None      # valida
             cache[key]=info; return info
@@ -2471,6 +2730,8 @@ class Engine:
         with self.lock:
             if (not self.pm or not self._proc_alive()) and not self.attach():   # jogo reiniciou -> re-attach sozinho
                 return False
+            if self._wd_hold:                     # watchdog reiniciando o jogo: attacha so, sem aplicar nada (start LIMPO)
+                return True
             try:
                 self.apply_actk(); self.apply_god(); self.apply_hitkill()
                 self.apply_stats(); self.apply_stage(); self.apply_speedhack(); self.apply_automation()

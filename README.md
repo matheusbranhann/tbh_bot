@@ -1,9 +1,8 @@
-# tbh_bot — TaskBarHero / Task Bar Hero trainer, cheat & bot
+# tbh_bot
 
-A single-window **trainer, cheat panel and automation bot** for the offline Unity/IL2CPP idle game
-**TaskbarHero** (a.k.a. *Task Bar Hero* / *TBH*, on Steam). It reads and writes the running game's memory to
-give you a trainer, a live inventory value viewer, a Steam market price browser, and a set of hands-off
-automations (open boxes, auto-stash, auto-fuse/synthesize, auto-boss, stage teleport). **Self-updating.**
+A single-window control panel and automation bot for the offline Unity/IL2CPP game **TaskbarHero** (Steam).
+It reads and writes the running game's memory to give you a trainer, a live inventory value viewer, a Steam
+market price browser, and a set of hands-off automations (open boxes, auto-stash, auto-synthesize).
 
 > **Precision-instrument UI:** deep-black theme, hairline borders, monospace data, a single orange accent.
 
@@ -25,14 +24,12 @@ automations (open boxes, auto-stash, auto-fuse/synthesize, auto-boss, stage tele
 | **Trainer** | Toggle protection (ACTk bypass, God Mode), edit 25+ stats by category, edit stage fields, save/load **profiles**. |
 | **Inventory** | Lists every item (inventory + stash) with grade, quantity, and **Steam market value**, sorted by worth. |
 | **Market** | Browse/search live Steam Community Market prices for game items. |
+| 🌳 **Runes** | Interactive **rune tree** with the game's real icons and live current/max levels. Unlock or level any rune **without spending coins** — click one (max or +1 per click), a whole **category** (chest-drop, combat, gold…), or **all at once**. Hard-capped at each rune's max, so it can never over-level. |
 | 🎁 **Auto-box** | Opens boxes automatically the moment they drop (normal / boss / act-boss). |
 | 📦 **Auto-stash** | Moves items from the inventory into the stash automatically. |
-| ⚗️ **Auto-fuse (synthesis)** | Auto-opens the cube and fuses **9 of a grade** at **Lv.65~80**, cycling Equipment / Accessory / Material by itself. Pick the **max grade** and **types** — a hard cap **never fuses above your choice**. |
-| 🗡 **Auto-boss** | Spends a soulstone on the act boss (x-10) of a difficulty and returns automatically. |
-| 📈 **Evolution** | Always keeps you on your newest unlocked stage (1-1 → Torment 3-9). Free stage **teleport** to any stage too. |
+| ⚗️ **Auto-fuse** | Full-fills the cube and fuses **9 of the same grade** — **only when the result is Lv.65+** (never burns low-level items). |
 | 🏷 **Price overlay** | Optional on-screen overlay that shows an item's Steam price on hover (native Windows OCR). |
 | 🔄 **Auto-offsets** | If the game updates, the panel **re-resolves all memory offsets by itself** (via a bundled Il2CppDumper), so it keeps working across builds. |
-| ⬆️ **Auto-update** | Checks GitHub on startup and **updates itself in one click** when a new version ships. |
 
 ---
 
@@ -107,9 +104,9 @@ Everything is memory-only; no files in the game folder are modified.
 
 ## 📝 Notes & limitations
 
-- **Auto-fuse is level- and grade-safe:** it opens the cube, sets **Lv.65~80**, and cycles the **types**
-  by itself. Choose the **max grade** and which **types** to fuse in the panel — a hard cap reads the actual
-  filled grade and **never fuses above your choice** (default `Rare`, so it never touches legendary+).
+- **Auto-fuse is level-safe:** it never fuses below Lv.65. Keep the **Cube open** at the **Lv.65~80** dropdown
+  and set the **type** (Gear / Material / Accessory) yourself — the bot won't change the type automatically
+  (doing that in-code resets the level filter and can close the game), so switch types manually to fuse each one.
 - Auto-offsets covers renamed/obfuscated symbols, but a very large game update may need a fresh Il2CppDumper.
 
 ---
@@ -123,7 +120,3 @@ Everything is memory-only; no files in the game folder are modified.
 ## 📄 License
 
 MIT — see [LICENSE](LICENSE). The bundled Il2CppDumper keeps its own license.
-
----
-
-<sub>**Keywords:** TaskBarHero · Task Bar Hero · TBH · taskbarhero cheat · task bar hero trainer · TBH bot · idle game trainer · Steam cheat · Unity IL2CPP trainer · game hacking · memory editor · auto-fuse · auto-box · godmode · pymem · Python game bot.</sub>

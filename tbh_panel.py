@@ -243,13 +243,14 @@ class Panel:
                                  segmented_button_selected_color=CARD2,segmented_button_selected_hover_color=STROKE,
                                  segmented_button_unselected_color=SURF,text_color=SUB,corner_radius=8,border_width=0)
         self.tabs.pack(fill="both",expand=True,padx=14,pady=2)
-        for t in ("Trainer","Inventory","Market"): self.tabs.add(t)
+        for t in ("Trainer","Inventory","Market","Runes"): self.tabs.add(t)
         try: self.tabs._segmented_button.configure(font=MONO(12),text_color=SUB,
                                                     selected_color=CARD2,text_color_disabled=SUBTLE)
         except Exception: pass
         self._splash_step("building Trainer…");   self._build_trainer(self.tabs.tab("Trainer"))
         self._splash_step("building Inventory…"); self._build_inv(self.tabs.tab("Inventory"))
         self._splash_step("building Market…");    self._build_mkt(self.tabs.tab("Market"))
+        self._splash_step("building Runes…");     self._build_runes(self.tabs.tab("Runes"))
         # bottom bar
         bar=ctk.CTkFrame(self.root,fg_color=SURF,corner_radius=0,height=48); bar.pack(fill="x",side="bottom")
         ctk.CTkFrame(bar,fg_color=STROKE,height=1,corner_radius=0).pack(fill="x",side="top")
@@ -530,6 +531,165 @@ class Panel:
         self.inv_tot.configure(text=("Total: $%.2f   •   %d items (%d types)"%(grand,n,len(rows))) if ok else "game closed or resolving offsets…")
 
     # ---------- Mercado ----------
+    # ============================= RUNES TAB (arvore + desbloqueio client-side) =============================
+    RUNE_CATCOLOR={"chest":"#f0a83a","combat":"#e5564c","gold":"#e8c93a","exp":"#5cbf6a","util":"#4bb0cc"}
+    RUNE_CATLABEL={"chest":"Caixa/Drop","combat":"Combate","gold":"Ouro","exp":"EXP","util":"Utilidade"}
+
+    def _rune_cat(self,name):
+        n=(name or "").lower()
+        if any(w in n for w in ("chest","drop","openall","openone","autoopen","wavecount")): return "chest"
+        if any(w in n for w in ("attackdamage","attackspeed","armor","movespeed")): return "combat"
+        if "gold" in n: return "gold"
+        if "exp" in n: return "exp"
+        return "util"
+
+    def _rune_icon(self,name,size,locked):
+        k=(name,size,locked)
+        if k in self._rune_imgs: return self._rune_imgs[k]
+        try:
+            import base64,io
+            from PIL import Image,ImageTk
+            from tbh_rune_assets import ICONS
+            b=ICONS.get(name)
+            if not b: return None
+            img=Image.open(io.BytesIO(base64.b64decode(b))).convert("RGBA")
+            img.thumbnail((size,size),Image.LANCZOS)
+            if locked:
+                a=img.getchannel("A"); img=img.convert("L").point(lambda v:int(v*0.5)).convert("RGBA"); img.putalpha(a)
+            ph=ImageTk.PhotoImage(img); self._rune_imgs[k]=ph; return ph
+        except Exception:
+            return None
+
+    def _runes_layout(self,defs):
+        import collections,sys as _s
+        ch={k:[c for c in d["next"] if c in defs] for k,d in defs.items()}
+        par=collections.defaultdict(list)
+        for kk,cs in ch.items():
+            for c in cs: par[c].append(kk)
+        roots=[kk for kk in sorted(defs) if not par[kk]]
+        depth={}; tpar={}; q=collections.deque()
+        for r in roots: depth[r]=0; tpar[r]=None; q.append(r)
+        while q:
+            n=q.popleft()
+            for c in ch[n]:
+                if c not in depth: depth[c]=depth[n]+1; tpar[c]=n; q.append(c)
+        for kk in defs: depth.setdefault(kk,0)
+        tch=collections.defaultdict(list)
+        for n,p in tpar.items():
+            if p is not None: tch[p].append(n)
+        yp={}; ctr=[0.0]; _s.setrecursionlimit(20000)
+        def asg(n):
+            cc=sorted(tch[n])
+            if not cc: yp[n]=ctr[0]; ctr[0]+=1
+            else:
+                for c in cc: asg(c)
+                yp[n]=sum(yp[c] for c in cc)/len(cc)
+        for r in roots: asg(r); ctr[0]+=1.3
+        for kk in defs:
+            if kk not in yp: yp[kk]=ctr[0]; ctr[0]+=1
+        CW,RH,PAD=104,58,28
+        return {kk:(PAD+depth[kk]*CW,PAD+yp[kk]*RH) for kk in defs}
+
+    def _read_runes_data(self):
+        defs=self.eng.read_rune_defs()
+        levels=self.eng.read_runes() if defs else None
+        return defs,(levels or {})
+
+    def refresh_runes(self):
+        def w():
+            defs,levels=self._read_runes_data()
+            self.root.after(0,lambda:self._render_runes(defs,levels))
+        threading.Thread(target=w,daemon=True).start()
+
+    def _rune_togglemode(self):
+        self._rune_click_max=not self._rune_click_max
+        self._rune_modebtn.configure(text="clique = máx" if self._rune_click_max else "clique = +1")
+
+    def _rune_press(self,e):
+        self.rune_canvas.scan_mark(e.x,e.y); self._rune_press_xy=(e.x,e.y); self._rune_moved=False
+    def _rune_drag(self,e):
+        self.rune_canvas.scan_dragto(e.x,e.y,gain=1)
+        if self._rune_press_xy and (abs(e.x-self._rune_press_xy[0])>4 or abs(e.y-self._rune_press_xy[1])>4): self._rune_moved=True
+    def _rune_release(self,e):
+        if self._rune_moved or not self._rune_defs_cache: return
+        cx=self.rune_canvas.canvasx(e.x); cy=self.rune_canvas.canvasy(e.y)
+        for it in self.rune_canvas.find_overlapping(cx-2,cy-2,cx+2,cy+2):
+            for t in self.rune_canvas.gettags(it):
+                if t.startswith("rune_"): self._rune_click(int(t[5:])); return
+
+    def _rune_click(self,key):
+        d=(self._rune_defs_cache or {}).get(key)
+        if not d: return
+        cur=self._rune_levels.get(key,0); mx=d["max"]
+        tgt=mx if self._rune_click_max else min(cur+1,mx)
+        def w():
+            self.eng.set_rune(key,tgt); self.root.after(0,self.refresh_runes)
+        threading.Thread(target=w,daemon=True).start()
+
+    def _rune_bulk(self,to_max,cat):
+        keys=None
+        if cat:
+            defs=self._rune_defs_cache or {}
+            keys=[k for k,d in defs.items() if self._rune_cat(d["name"])==cat]
+        def w():
+            n=self.eng.unlock_runes(keys=keys,to_max=to_max)
+            self.root.after(0,lambda:(self.rune_status.configure(text="%d runas alteradas"%n),self.refresh_runes()))
+        threading.Thread(target=w,daemon=True).start()
+
+    def _build_runes(self,f):
+        self._rune_imgs={}; self._rune_defs_cache=None; self._rune_levels={}
+        self._rune_click_max=True; self._rune_press_xy=None; self._rune_moved=False
+        top=ctk.CTkFrame(f,fg_color="transparent"); top.pack(fill="x",padx=8,pady=(10,4))
+        self.abtn(top,"⟳ Refresh",self.refresh_runes).pack(side="right")
+        self.btn(top,"Desbloquear TUDO (máx)",lambda:self._rune_bulk(True,None),color="#7a4a12",hover="#8a5a1a",tcolor="#ffd9a0").pack(side="left",padx=(0,6))
+        self.btn(top,"Tudo nível 1",lambda:self._rune_bulk(False,None),fs=11).pack(side="left",padx=(0,10))
+        for cat in ("chest","combat","gold","exp","util"):
+            self.btn(top,self.RUNE_CATLABEL[cat],lambda c=cat:self._rune_bulk(True,c),tcolor=self.RUNE_CATCOLOR[cat],fs=11).pack(side="left",padx=2)
+        self._rune_modebtn=self.btn(top,"clique = máx",self._rune_togglemode,fs=11); self._rune_modebtn.pack(side="left",padx=(10,6))
+        self.rune_status=ctk.CTkLabel(top,text="",text_color=SUB,font=MONO(11)); self.rune_status.pack(side="left",padx=8)
+        card=ctk.CTkFrame(f,fg_color=CARD,corner_radius=10,border_width=1,border_color=STROKE); card.pack(fill="both",expand=True,padx=8,pady=(2,8))
+        self.rune_canvas=tk.Canvas(card,bg="#191920",highlightthickness=0,bd=0)
+        vsb=ttk.Scrollbar(card,orient="vertical",command=self.rune_canvas.yview)
+        hsb=ttk.Scrollbar(card,orient="horizontal",command=self.rune_canvas.xview)
+        self.rune_canvas.configure(yscrollcommand=vsb.set,xscrollcommand=hsb.set)
+        self.rune_canvas.grid(row=0,column=0,sticky="nsew",padx=(8,0),pady=(8,0))
+        vsb.grid(row=0,column=1,sticky="ns",pady=(8,0)); hsb.grid(row=1,column=0,sticky="ew",padx=(8,0))
+        card.grid_rowconfigure(0,weight=1); card.grid_columnconfigure(0,weight=1)
+        self.rune_canvas.bind("<ButtonPress-1>",self._rune_press)
+        self.rune_canvas.bind("<B1-Motion>",self._rune_drag)
+        self.rune_canvas.bind("<ButtonRelease-1>",self._rune_release)
+        self.rune_canvas.bind("<MouseWheel>",lambda e:self.rune_canvas.yview_scroll(int(-e.delta/120),"units"))
+        self.rune_canvas.bind("<Shift-MouseWheel>",lambda e:self.rune_canvas.xview_scroll(int(-e.delta/120),"units"))
+        self.rune_canvas.create_text(16,16,anchor="nw",fill=SUB,text="carregando… (abra o jogo para as runas aparecerem)",font=("Consolas",13))
+        self.refresh_runes()
+
+    def _render_runes(self,defs,levels):
+        c=self.rune_canvas; c.delete("all")
+        if not defs:
+            c.create_text(16,16,anchor="nw",fill=SUB,text="jogo fechado ou resolvendo offsets…",font=("Consolas",13)); return
+        self._rune_defs_cache=defs; self._rune_levels=levels
+        pos=self._runes_layout(defs)
+        for k,d in defs.items():
+            if k not in pos: continue
+            x1,y1=pos[k]
+            for nx in d["next"]:
+                if nx in pos:
+                    x2,y2=pos[nx]; c.create_line(x1+20,y1+20,x2+20,y2+20,fill="#33333f",width=2)
+        unlocked=0
+        for k,d in defs.items():
+            if k not in pos: continue
+            x,y=pos[k]; lv=levels.get(k,0); mx=d["max"]; cat=self._rune_cat(d["name"])
+            locked=(lv<=0); maxed=(lv>=mx and lv>0)
+            bd=("#34343e" if locked else ("#ffd24a" if maxed else self.RUNE_CATCOLOR[cat]))
+            if lv>=1: unlocked+=1
+            tag=("rune_%d"%k,)
+            c.create_rectangle(x,y,x+40,y+40,outline=bd,width=2,fill="#26262e",tags=tag)
+            img=self._rune_icon(d["icon"],34,locked)
+            if img: c.create_image(x+20,y+20,image=img,tags=tag)
+            c.create_text(x+20,y+50,text="%d/%d"%(lv,mx),fill=("#ffd24a" if maxed else (FG if lv>0 else SUB)),font=("Consolas",8,"bold"),tags=tag)
+        c.configure(scrollregion=c.bbox("all"))
+        self.rune_status.configure(text="%d/%d desbloqueadas  ·  arraste=mover, clique numa runa = %s"%(unlocked,len(defs),"máx" if self._rune_click_max else "+1"))
+
     def _build_mkt(self,f):
         bar=ctk.CTkFrame(f,fg_color="transparent"); bar.pack(fill="x",padx=8,pady=(10,4))
         self.mkt_q=ctk.CTkEntry(bar,placeholder_text="🔎  search item…",font=F(11),fg_color=CARD2,border_color=STROKE,corner_radius=8,height=32)
@@ -604,7 +764,9 @@ class Panel:
             self.conn.configure(text="●  connected   ·   game v%s   ·   build %s   ·   offsets ✓"%(
                 C.game_version() or "?", (C.dll_hash() or "?")[:6]),text_color=GRN)
             if not getattr(self,"_was_conn",False):      # RECONNECTED (game reopened) -> refresh everything
-                self.read_stats_ui(); self.read_stage_ui(); self.refresh_inv(); self.log("game detected — panel updated")
+                self.read_stats_ui(); self.read_stage_ui(); self.refresh_inv()
+                if hasattr(self,"rune_canvas"): self.refresh_runes()
+                self.log("game detected — panel updated")
             self._was_conn=True
         else:
             self.conn.configure(text="●  game closed — reconnects on reopen",text_color=RED)
