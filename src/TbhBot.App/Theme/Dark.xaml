@@ -234,22 +234,26 @@
     <Style TargetType="TextBox">
         <Setter Property="Foreground" Value="{StaticResource Acc}"/>
         <Setter Property="CaretBrush" Value="{StaticResource Acc}"/>
+        <Setter Property="SelectionBrush" Value="{StaticResource Acc}"/>
         <Setter Property="FontFamily" Value="{StaticResource Mono}"/>
         <Setter Property="FontSize" Value="13"/>
-        <Setter Property="Padding" Value="9,7"/>
+        <Setter Property="MinHeight" Value="32"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Padding" Value="9,0"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TextBox">
+                    <!-- padrão ROBUSTO: o PART_ContentHost ESTICA e preenche a borda; a centralização vertical
+                         vem do VerticalContentAlignment (não do host). O template anterior espremia o texto. -->
                     <Border x:Name="b" Background="{StaticResource Card3}" BorderBrush="{StaticResource Stroke}"
-                            BorderThickness="1" CornerRadius="6">
-                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/>
+                            BorderThickness="1" CornerRadius="6" SnapsToDevicePixels="True" Padding="{TemplateBinding Padding}">
+                        <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                                      HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden"/>
                     </Border>
                     <ControlTemplate.Triggers>
-                        <!-- foco = só borda laranja + fundo levemente mais claro. SEM DropShadowEffect aqui:
-                             o blur do effect borrava o TEXTO editável (ficava ilegível ao digitar). -->
+                        <!-- foco = só borda laranja (SEM DropShadowEffect: o blur borrava o texto editável). -->
                         <Trigger Property="IsKeyboardFocused" Value="True">
                             <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Acc}"/>
-                            <Setter TargetName="b" Property="Background" Value="#B3000000"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
