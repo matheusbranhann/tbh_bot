@@ -245,11 +245,11 @@
                         <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
+                        <!-- foco = só borda laranja + fundo levemente mais claro. SEM DropShadowEffect aqui:
+                             o blur do effect borrava o TEXTO editável (ficava ilegível ao digitar). -->
                         <Trigger Property="IsKeyboardFocused" Value="True">
                             <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Acc}"/>
-                            <Setter TargetName="b" Property="Effect">
-                                <Setter.Value><DropShadowEffect Color="#FF7A18" BlurRadius="10" ShadowDepth="0" Opacity="0.5"/></Setter.Value>
-                            </Setter>
+                            <Setter TargetName="b" Property="Background" Value="#B3000000"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

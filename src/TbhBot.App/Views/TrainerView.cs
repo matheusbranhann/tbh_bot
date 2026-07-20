@@ -233,7 +233,8 @@ public sealed class TrainerView : UserControl
                     if (!stats.TryGetValue(name, out double v)) { row.Current.Text = "--"; continue; }
                     string txt = v.ToString("0.###", CultureInfo.InvariantCulture);
                     row.Current.Text = txt;
-                    if (string.IsNullOrWhiteSpace(row.Value.Text)) row.Value.Text = txt;
+                    // só pré-preenche quando o campo está vazio E NÃO está sendo editado (senão apaga o que você digita)
+                    if (string.IsNullOrWhiteSpace(row.Value.Text) && !row.Value.IsKeyboardFocused) row.Value.Text = txt;
                 }
             });
         });
@@ -292,7 +293,7 @@ public sealed class TrainerView : UserControl
                     if (!fields.TryGetValue(name, out int v)) { row.Current.Text = "--"; continue; }
                     string txt = v.ToString(CultureInfo.InvariantCulture);
                     row.Current.Text = txt;
-                    if (string.IsNullOrWhiteSpace(row.Value.Text)) row.Value.Text = txt;
+                    if (string.IsNullOrWhiteSpace(row.Value.Text) && !row.Value.IsKeyboardFocused) row.Value.Text = txt;
                 }
             });
         });
