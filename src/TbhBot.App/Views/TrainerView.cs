@@ -66,7 +66,13 @@ public sealed class TrainerView : UserControl
         stack.Children.Add(BuildStats());                                   // stats
         stack.Children.Add(BuildStageFields());                             // campos de fase
         stack.Children.Add(BuildUnlocks());                                 // cubo
-        Content = stack;
+        stack.Margin = new Thickness(0, 0, 0, 24);                          // respiro no fim
+        Content = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = stack,
+        };
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += (_, _) => Tick();
@@ -256,7 +262,26 @@ public sealed class TrainerView : UserControl
         }
         body.Children.Add(grid);
         body.Children.Add(Hint("⚠ Act/StageNo podem ser rejeitados pelo servidor. Override escreve na hora e mantém forçado."));
-        return GlassCard("📐", AmberC, "Stage Data Override", body);
+        var readBtn = new Button { Content = "🔄 Ler atuais", Padding = new Thickness(12, 6, 12, 6), VerticalAlignment = VerticalAlignment.Center };
+        readBtn.Click += (_, _) => ReadStageNow();
+        return GlassCard("📐", AmberC, "Stage Data Override", body, readBtn);
+    }
+
+    // Preenche TODOS os campos de fase com os valores ATUAIS do jogo (sobrescreve o que estiver digitado).
+    private void ReadStageNow()
+    {
+        if (!_svc.IsAttached) { _svc.RaiseLog("jogo fechado — não dá pra ler os campos de fase"); return; }
+        Task.Run(() =>
+        {
+            Dictionary<string, int> fields;
+            try { fields = _svc.Engine.Stats.ReadStage(); } catch { return; }
+            Dispatcher.Invoke(() =>
+            {
+                foreach (var (name, row) in _stageRows)
+                    if (fields.TryGetValue(name, out int v)) row.Value.Text = v.ToString(CultureInfo.InvariantCulture);
+                _svc.RaiseLog("campos de fase preenchidos com os valores atuais");
+            });
+        });
     }
 
     private void ToggleForceStage(EditRow row)
@@ -511,17 +536,19 @@ public sealed class TrainerView : UserControl
         return cb;
     }
 
-    // glass card com header [ícone colorido | título]
-    private Border GlassCard(string emoji, string colorHex, string title, UIElement body)
+    // glass card com header [ícone colorido | título | (opcional) botão à direita]
+    private Border GlassCard(string emoji, string colorHex, string title, UIElement body, UIElement? headerRight = null)
     {
         var panel = new StackPanel();
-        var hdr = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 18) };
+        var hdr = new DockPanel { Margin = new Thickness(0, 0, 0, 18) };
+        if (headerRight is not null) { DockPanel.SetDock(headerRight, Dock.Right); hdr.Children.Add(headerRight); }
+        var left = new StackPanel { Orientation = Orientation.Horizontal };
         var icoWrap = new Border { Width = 30, Height = 30, CornerRadius = new CornerRadius(7), Background = B("Card3"), VerticalAlignment = VerticalAlignment.Center };
         icoWrap.Child = new TextBlock { Text = emoji, FontSize = 15, Foreground = Freeze(colorHex), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        hdr.Children.Add(icoWrap);
-        hdr.Children.Add(new TextBlock { Text = title, Style = St("CardTitle"), Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+        left.Children.Add(icoWrap);
+        left.Children.Add(new TextBlock { Text = title, Style = St("CardTitle"), Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+        hdr.Children.Add(left);
         panel.Children.Add(hdr);
-        // divisória
         panel.Children.Add(new Border { Height = 1, Background = B("Stroke"), Margin = new Thickness(0, -6, 0, 16) });
         panel.Children.Add(body);
         return new Border { Style = St("Card.Border"), Child = panel };

@@ -98,10 +98,9 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- área de conteúdo (as 5 views, alternadas pela nav) -->
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
-                    <Grid x:Name="ContentHost" Margin="40,0,40,40"/>
-                </ScrollViewer>
+                <!-- área de conteúdo (as 5 views, alternadas pela nav). SEM ScrollViewer externo:
+                     cada view rola SOZINHA (senão o scroll interno de Inventory/Runes conflita). -->
+                <Grid x:Name="ContentHost" Margin="40,0,40,0"/>
             </DockPanel>
         </Grid>
     </Grid>

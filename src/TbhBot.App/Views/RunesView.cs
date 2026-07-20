@@ -76,6 +76,7 @@ public sealed class RunesView : UserControl
         DockPanel.SetDock(bar, Dock.Top);
         bar.Children.Add(MakeBtn("🔓 Desbloquear TUDO (máx)", "Accent.Button", () => Bulk(toMax: true)));
         bar.Children.Add(MakeBtn("Tudo nível 1", null, () => Bulk(toMax: false)));
+        bar.Children.Add(MakeBtn("🎯 Centralizar", null, CenterView));
         bar.Children.Add(MakeBtn("⟳ Refresh", null, Refresh));
         root.Children.Add(bar);
 
@@ -121,12 +122,28 @@ public sealed class RunesView : UserControl
 
     private void OnWheel(object s, MouseWheelEventArgs e)
     {
+        e.Handled = true;   // roda = SÓ zoom aqui; não deixa borbulhar (senão rolava a página/painel)
         var p = e.GetPosition(_viewport);
         double f = e.Delta > 0 ? 1.15 : 1 / 1.15;
         var m = _mt.Matrix;
-        double target = Math.Clamp(m.M11 * f, 0.2, 3.0);
+        double target = Math.Clamp(m.M11 * f, 0.35, 2.5);
         f = target / m.M11;
         m.ScaleAt(f, f, p.X, p.Y);
+        _mt.Matrix = m;
+    }
+
+    // Centraliza a árvore no viewport (centróide dos nós, escala 0.6). Usado no 1º render + botão "Centralizar"
+    // (recupera de qualquer zoom/pan que tenha jogado a árvore pra fora da tela).
+    private void CenterView()
+    {
+        if (_pos.Count == 0) return;
+        double cx = _pos.Values.Average(p => p.x) + 20, cy = _pos.Values.Average(p => p.y) + 20;
+        const double s = 0.6;
+        double vw = _viewport.ActualWidth > 0 ? _viewport.ActualWidth : 520;
+        double vh = _viewport.ActualHeight > 0 ? _viewport.ActualHeight : 560;
+        var m = Matrix.Identity;
+        m.Scale(s, s);
+        m.Translate(vw / 2 - cx * s, vh / 2 - cy * s);
         _mt.Matrix = m;
     }
 
@@ -207,17 +224,7 @@ public sealed class RunesView : UserControl
         if (!_centered && _pos.Count > 0)
         {
             _centered = true;
-            double cx = _pos.Values.Average(p => p.x) + 20, cy = _pos.Values.Average(p => p.y) + 20;   // centróide
-            Dispatcher.BeginInvoke(new Action(() =>
-            {
-                const double s = 0.6;
-                double vw = _viewport.ActualWidth > 0 ? _viewport.ActualWidth : 520;
-                double vh = _viewport.ActualHeight > 0 ? _viewport.ActualHeight : 560;
-                var m = Matrix.Identity;
-                m.Scale(s, s);
-                m.Translate(vw / 2 - cx * s, vh / 2 - cy * s);   // centróide no centro do viewport
-                _mt.Matrix = m;
-            }), DispatcherPriority.ContextIdle);
+            Dispatcher.BeginInvoke(new Action(CenterView), DispatcherPriority.ContextIdle);
         }
 
         int unlocked = defs.Keys.Count(k => levels.GetValueOrDefault(k) >= 1);
