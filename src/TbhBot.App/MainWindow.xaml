@@ -1,0 +1,108 @@
+<Window x:Class="TbhBot.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:v="clr-namespace:TbhBot.App.Views"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="tbh_bot" Height="900" Width="1240" MinWidth="1000" MinHeight="680"
+        WindowStartupLocation="CenterScreen" WindowStyle="None"
+        Background="{StaticResource Bg}" FontFamily="{StaticResource UI}"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Ideal">
+
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" CornerRadius="0" GlassFrameThickness="0"/>
+    </shell:WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <!-- ícones da nav (SVG mini-language) -->
+        <PathGeometry x:Key="IcoTrainer" Figures="M12 2L2 22h20L12 2zm0 3.5l7 14.5H5l7-14.5z"/>
+        <PathGeometry x:Key="IcoInventory" Figures="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/>
+        <PathGeometry x:Key="IcoMarket" Figures="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.31-8.86c-1.77-.45-2.34-.94-2.34-1.67 0-.84.79-1.43 2.1-1.43 1.38 0 1.9.66 1.94 1.64h1.71c-.05-1.34-.87-2.57-2.49-2.97V5H10.9v1.69c-1.51.32-2.72 1.3-2.72 2.81 0 1.79 1.49 2.69 3.66 3.21 1.95.46 2.34 1.15 2.34 1.87 0 .53-.39 1.64-2.25 1.64-1.74 0-2.1-.96-2.11-1.66H8.1c.02 1.83 1.34 2.87 2.8 3.17V19h2.33v-1.7c1.64-.32 2.74-1.35 2.74-2.91-.01-1.7-1.33-2.67-3.66-3.25z"/>
+        <PathGeometry x:Key="IcoRunes" Figures="M12 2l-5.5 9h11zM6.5 12L1 21h11zm11 0l-5.5 9H23z"/>
+        <PathGeometry x:Key="IcoStages" Figures="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"/>
+        <PathGeometry x:Key="IcoMin" Figures="M 0,5 H 11"/>
+        <PathGeometry x:Key="IcoClose" Figures="M 0,0 L 11,11 M 11,0 L 0,11"/>
+    </Window.Resources>
+
+    <Grid>
+        <!-- fundo animado de partículas (atrás de tudo) -->
+        <v:ParticleBackground x:Name="Particles"/>
+        <!-- brilho radial sutil no canto -->
+        <Grid>
+            <Grid.Background>
+                <RadialGradientBrush GradientOrigin="0.85,0.05" Center="0.85,0.05" RadiusX="0.7" RadiusY="0.7">
+                    <GradientStop Color="#14FBBF24" Offset="0"/>
+                    <GradientStop Color="#00000000" Offset="1"/>
+                </RadialGradientBrush>
+            </Grid.Background>
+        </Grid>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="260"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ═══════════════ SIDEBAR ═══════════════ -->
+            <Border Grid.Column="0" Background="{StaticResource Surf}" BorderBrush="{StaticResource Stroke}" BorderThickness="0,0,1,0">
+                <DockPanel Margin="0,20,0,0">
+                    <!-- brand -->
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="24,4,24,28">
+                        <Border Width="34" Height="34" CornerRadius="9">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                    <GradientStop Color="#FF7A18" Offset="0"/><GradientStop Color="#FBBF24" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                            <Border.Effect><DropShadowEffect Color="#FF7A18" BlurRadius="16" ShadowDepth="0" Opacity="0.6"/></Border.Effect>
+                            <TextBlock Text="T" Foreground="Black" FontWeight="Bold" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="tbh_bot" Foreground="White" FontSize="23" FontWeight="Bold" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <!-- bottom: conexão + launch -->
+                    <StackPanel DockPanel.Dock="Bottom" Margin="24,16,24,24">
+                        <Border BorderBrush="{StaticResource Stroke}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <Ellipse x:Name="ConnDot" Width="8" Height="8" Fill="{StaticResource Red}" VerticalAlignment="Center">
+                                        <Ellipse.Effect><DropShadowEffect x:Name="ConnDotGlow" Color="#FF2A55" BlurRadius="8" ShadowDepth="0" Opacity="0.9"/></Ellipse.Effect>
+                                    </Ellipse>
+                                    <TextBlock x:Name="ConnLabel" Text="OFFLINE" Foreground="{StaticResource Red}" FontSize="13" FontWeight="SemiBold" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock x:Name="ConnDetails" Text="Aguardando conexão..." Foreground="{StaticResource Sub}" FontFamily="{StaticResource Mono}" FontSize="11"/>
+                                <Button x:Name="LaunchBtn" Style="{StaticResource LaunchButton}" Content="LAUNCH ENGINE" Margin="0,14,0,0" Click="OnLaunchGame"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- nav -->
+                    <StackPanel Margin="16,0,10,0">
+                        <RadioButton x:Name="NavTrainer" Style="{StaticResource NavItem}" GroupName="nav" Content="Control Center" Tag="{StaticResource IcoTrainer}" IsChecked="True" Checked="OnNav"/>
+                        <RadioButton x:Name="NavInventory" Style="{StaticResource NavItem}" GroupName="nav" Content="Inventory" Tag="{StaticResource IcoInventory}" Checked="OnNav"/>
+                        <RadioButton x:Name="NavMarket" Style="{StaticResource NavItem}" GroupName="nav" Content="Market" Tag="{StaticResource IcoMarket}" Checked="OnNav"/>
+                        <RadioButton x:Name="NavRunes" Style="{StaticResource NavItem}" GroupName="nav" Content="Runes Tree" Tag="{StaticResource IcoRunes}" Checked="OnNav"/>
+                        <RadioButton x:Name="NavStages" Style="{StaticResource NavItem}" GroupName="nav" Content="Stage Map" Tag="{StaticResource IcoStages}" Checked="OnNav"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <!-- ═══════════════ MAIN AREA ═══════════════ -->
+            <DockPanel Grid.Column="1">
+                <!-- top header (draggable) -->
+                <Grid DockPanel.Dock="Top" Height="72" Background="Transparent" MouseLeftButtonDown="OnHeaderDrag">
+                    <TextBlock x:Name="PageTitle" Text="Control Center" Foreground="White" FontSize="30" FontWeight="Bold" VerticalAlignment="Center" Margin="40,0,0,0"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <TextBlock x:Name="StatusMini" Style="{StaticResource Sub.Text}" FontFamily="{StaticResource Mono}" FontSize="11" VerticalAlignment="Center" Margin="0,0,16,0" TextTrimming="CharacterEllipsis" MaxWidth="380"/>
+                        <Button Style="{StaticResource ChromeButton}" Tag="{StaticResource IcoMin}" Click="OnMinimize"/>
+                        <Button Style="{StaticResource ChromeButton}" Tag="{StaticResource IcoClose}" Click="OnClose"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- área de conteúdo (as 5 views, alternadas pela nav) -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+                    <Grid x:Name="ContentHost" Margin="40,0,40,40"/>
+                </ScrollViewer>
+            </DockPanel>
+        </Grid>
+    </Grid>
+</Window>

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskbarHero | Neo-Dashboard</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  
+  <!-- Animated Background -->
+  <canvas id="bg-canvas"></canvas>
+
+  <div id="app">
+    
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">T</div>
+        <div class="brand-text">tbh_bot</div>
+      </div>
+      
+      <nav class="nav-menu">
+        <button class="nav-item active" data-target="view-trainer">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M12 2L2 22h20L12 2zm0 3.5l7 14.5H5l7-14.5z"/></svg>
+          Control Center
+        </button>
+        <button class="nav-item" data-target="view-inventory">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+          Inventory
+        </button>
+        <button class="nav-item" data-target="view-market">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.31-8.86c-1.77-.45-2.34-.94-2.34-1.67 0-.84.79-1.43 2.1-1.43 1.38 0 1.9.66 1.94 1.64h1.71c-.05-1.34-.87-2.57-2.49-2.97V5H10.9v1.69c-1.51.32-2.72 1.3-2.72 2.81 0 1.79 1.49 2.69 3.66 3.21 1.95.46 2.34 1.15 2.34 1.87 0 .53-.39 1.64-2.25 1.64-1.74 0-2.1-.96-2.11-1.66H8.1c.02 1.83 1.34 2.87 2.8 3.17V19h2.33v-1.7c1.64-.32 2.74-1.35 2.74-2.91-.01-1.7-1.33-2.67-3.66-3.25z"/></svg>
+          Market
+        </button>
+        <button class="nav-item" data-target="view-runes">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M12 2l-5.5 9h11zM6.5 12L1 21h11zm11 0l-5.5 9H23z"/></svg>
+          Runes Tree
+        </button>
+        <button class="nav-item" data-target="view-stages">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"/></svg>
+          Stage Map
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <div class="conn-status">
+          <div class="conn-header" id="connHeader">
+            <div class="conn-dot"></div>
+            <span id="connLabel">OFFLINE</span>
+          </div>
+          <div class="conn-details" id="connDetails">
+            Aguardando conexão...
+          </div>
+        </div>
+        <button class="btn-launch" id="btnLaunch">
+          Launch Engine
+        </button>
+      </div>
+    </aside>
+
+    <!-- MAIN AREA -->
+    <main class="main-area">
+      
+      <!-- Top Header -->
+      <header class="top-header">
+        <h1 class="page-title" id="pageTitle">Control Center</h1>
+      </header>
+
+      <!-- VIEW: TRAINER (Control Center) -->
+      <div class="view-content active" id="view-trainer">
+        
+        <!-- ROW 1: Modules -->
+        <div class="grid-2 mb-6">
+          
+          <!-- Shield Systems -->
+          <section class="glass-card">
+            <div class="card-header">
+              <div class="card-icon" style="color: var(--neon-cyan)">🛡</div>
+              <div class="card-title">Shield Systems</div>
+            </div>
+            
+            <label class="cyber-switch-container mb-2">
+              <input type="checkbox" class="switch-input" id="actkToggle">
+              <div class="switch-info">
+                <span class="switch-title">ACTk Bypass</span>
+                <span class="switch-desc">Neutraliza detector (Idempotente)</span>
+              </div>
+              <div class="cyber-toggle"></div>
+            </label>
+            
+            <label class="cyber-switch-container">
+              <input type="checkbox" class="switch-input" id="godToggle">
+              <div class="switch-info">
+                <span class="switch-title">God Mode</span>
+                <span class="switch-desc">Invulnerabilidade Absoluta</span>
+              </div>
+              <div class="cyber-toggle"></div>
+            </label>
+          </section>
+
+          <!-- Core Automations -->
+          <section class="glass-card">
+            <div class="card-header">
+              <div class="card-icon" style="color: var(--neon-purple)">⚡</div>
+              <div class="card-title">Core Automations</div>
+            </div>
+            
+            <label class="cyber-switch-container auto-chain mb-2">
+              <input type="checkbox" class="switch-input" id="autoboxToggle">
+              <div class="switch-info">
+                <span class="switch-title">Auto-Box</span>
+                <span class="switch-desc">Abre caixas vivas via dispatcher</span>
+              </div>
+              <div class="cyber-toggle"></div>
+            </label>
+            
+            <label class="cyber-switch-container auto-chain">
+              <input type="checkbox" class="switch-input" id="autostashToggle">
+              <div class="switch-info">
+                <span class="switch-title">Auto-Stash</span>
+                <span class="switch-desc">Move e organiza itens por grade</span>
+              </div>
+              <div class="cyber-toggle"></div>
+            </label>
+          </section>
+        </div>
+
+        <!-- ROW 2: Synthesis & Combat -->
+        <section class="glass-card">
+          <div class="card-header">
+            <div class="card-icon" style="color: var(--neon-red)">⚗️</div>
+            <div class="card-title">Synthesis & Progression</div>
+          </div>
+          
+          <div class="grid-2">
+            <!-- Fuse -->
+            <div>
+              <label class="cyber-switch-container auto-chain mb-4">
+                <input type="checkbox" class="switch-input" id="autofuseToggle">
+                <div class="switch-info">
+                  <span class="switch-title">Auto-Fuse</span>
+                  <span class="switch-desc">Fusão em lote no Cubo</span>
+                </div>
+                <div class="cyber-toggle"></div>
+              </label>
+
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs text-muted">Grade Alvo:</span>
+                <select class="cyber-select">
+                  <option>Rare</option>
+                  <option>Epic</option>
+                  <option>Legendary</option>
+                </select>
+              </div>
+              <div class="text-xs text-dim">Funde itens menores até o limite definido.</div>
+            </div>
+
+            <!-- Boss / Evolve -->
+            <div>
+              <label class="cyber-switch-container auto-chain mb-2">
+                <input type="checkbox" class="switch-input" id="autobossToggle">
+                <div class="switch-info">
+                  <span class="switch-title">Auto-Boss</span>
+                  <span class="switch-desc">Consome Soulstones (x-10)</span>
+                </div>
+                <div class="cyber-toggle"></div>
+              </label>
+              
+              <label class="cyber-switch-container auto-chain mb-2">
+                <input type="checkbox" class="switch-input" id="evolveToggle">
+                <div class="switch-info">
+                  <span class="switch-title">Evolution Climb</span>
+                  <span class="switch-desc">Auto-stop no Torment 3-9</span>
+                </div>
+                <div class="cyber-toggle"></div>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- ROW 3: Stats Editor (Grid Mode) -->
+        <section class="glass-card">
+          <div class="card-header">
+            <div class="card-icon" style="color: var(--neon-cyan)">📊</div>
+            <div class="card-title">Neural Overrides (Stats)</div>
+          </div>
+          
+          <div class="data-grid">
+            
+            <div class="stat-box">
+              <div class="stat-header">
+                <span class="stat-name">Attack Damage</span>
+                <span class="stat-current stat-val-mock">--</span>
+              </div>
+              <div class="stat-controls">
+                <input type="text" class="stat-input" placeholder="Novo valor">
+                <button class="btn-apply">Override</button>
+              </div>
+            </div>
+
+            <div class="stat-box">
+              <div class="stat-header">
+                <span class="stat-name">Attack Speed</span>
+                <span class="stat-current stat-val-mock">--</span>
+              </div>
+              <div class="stat-controls">
+                <input type="text" class="stat-input" placeholder="Novo valor">
+                <button class="btn-apply">Override</button>
+              </div>
+            </div>
+
+            <div class="stat-box">
+              <div class="stat-header">
+                <span class="stat-name">Critical Chance</span>
+                <span class="stat-current stat-val-mock">--</span>
+              </div>
+              <div class="stat-controls">
+                <input type="text" class="stat-input" placeholder="Novo valor">
+                <button class="btn-apply">Override</button>
+              </div>
+            </div>
+
+            <div class="stat-box">
+              <div class="stat-header">
+                <span class="stat-name">Max HP</span>
+                <span class="stat-current stat-val-mock">--</span>
+              </div>
+              <div class="stat-controls">
+                <input type="text" class="stat-input" placeholder="Novo valor">
+                <button class="btn-apply">Override</button>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ROW 4: Watchdog & Profiles -->
+        <div class="grid-2">
+          
+          <section class="glass-card">
+             <div class="card-header">
+              <div class="card-icon" style="color: var(--neon-red)">🚨</div>
+              <div class="card-title">Resilience Protocol</div>
+            </div>
+            <label class="cyber-switch-container">
+              <input type="checkbox" class="switch-input" id="watchdogToggle">
+              <div class="switch-info">
+                <span class="switch-title">Watchdog (Auto-Restart)</span>
+                <span class="switch-desc">Reabre o jogo se crashar</span>
+              </div>
+              <div class="cyber-toggle"></div>
+            </label>
+          </section>
+
+          <section class="glass-card">
+            <div class="card-header">
+              <div class="card-icon" style="color: var(--neon-purple)">💾</div>
+              <div class="card-title">Memory Profiles</div>
+            </div>
+            
+            <div class="action-bar">
+              <input type="text" class="cyber-input" placeholder="Nome do Preset">
+              <button class="cyber-btn primary">Save</button>
+              <button class="cyber-btn">Load</button>
+            </div>
+          </section>
+
+        </div>
+
+      </div>
+
+      <!-- Outras views mockadas -->
+      <div class="view-content" id="view-inventory">
+        <h2 style="color: var(--text-muted)">Inventory Uplink...</h2>
+      </div>
+      <div class="view-content" id="view-market">
+        <h2 style="color: var(--text-muted)">Market Uplink...</h2>
+      </div>
+      <div class="view-content" id="view-runes">
+        <h2 style="color: var(--text-muted)">Runes Node Uplink...</h2>
+      </div>
+      <div class="view-content" id="view-stages">
+        <h2 style="color: var(--text-muted)">Stage Topology Uplink...</h2>
+      </div>
+
+    </main>
+  </div>
+
+  <script type="module" src="/main.js"></script>
+</body>
+</html>

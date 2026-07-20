@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Ambiente virtual criado pelo INSTALL.bat (nunca commitar/empacotar)
+.venv/
+.tbh_wtest.tmp
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Runtime / machine-specific
+cache/
+profiles.json
+tbh_error.log
+tbh_selftest.log
+*.pkl
+
+# OS
+Thumbs.db
+.DS_Store
+_cache_bundle/

@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Iced" Version="1.21.0" />
+  </ItemGroup>
+
+  <!-- Cache de offsets por build (o que o engine Python resolveu) EMBUTIDO no assembly -> 1 exe de verdade.
+       O Engine.Attach carrega offsets_<hash>.json embutido quando o build não está no KnownBuilds. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Offsets\*.json" />
+    <EmbeddedResource Include="Data\item_prices.json" />
+  </ItemGroup>
+
+</Project>

@@ -1,25 +1,26 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# Ambiente virtual criado pelo INSTALL.bat (nunca commitar/empacotar)
-.venv/
-.tbh_wtest.tmp
-
-# PyInstaller
-build/
+# .NET
+bin/
+obj/
+publish/
 dist/
-*.spec
+*.user
+*.suo
+.vs/
 
-# Runtime / machine-specific
-cache/
-profiles.json
-tbh_error.log
-tbh_selftest.log
-*.pkl
+# Rider / VS Code
+.idea/
+.vscode/
 
-# OS
-Thumbs.db
-.DS_Store
-_cache_bundle/
+# build/publish output
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+
+# web-preview (mockup do layout) — deps geradas
+layout/web-preview/node_modules/
+layout/web-preview/.vite/
+
+# offsets cache LOCAL (gerado ao lado do exe) — mas o offsets EMBUTIDO no projeto é versionado
+offsets_*.json
+!src/**/Offsets/offsets_*.json
+*.log
