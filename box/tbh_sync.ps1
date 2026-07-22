@@ -34,46 +34,66 @@ if ($ga) {
   Log "build do jogo instalado: $hash"
 }
 
-# ---------- 3) painel + tbh_core da release mais nova ----------
+# ---------- 3) painel da release mais nova (so quando a TAG muda: e um zip de ~70MB) ----------
 try {
   $r = Invoke-RestMethod "https://api.github.com/repos/$REPO/releases/latest" -Headers $UA
   $tag = $r.tag_name
   $asset = $r.assets | Where-Object { $_.name -like "*.zip" } | Select-Object -First 1
   $have = if (Test-Path "$DL\ver.txt") { Get-Content "$DL\ver.txt" } else { "" }
-  if ($have -ne $tag -or -not (Test-Path "$DL\tbh_core.py")) {
+  if ($have -ne $tag) {
     Log "baixando painel $tag (tinha: '$have')"
     Invoke-WebRequest $asset.browser_download_url -OutFile "$DL\panel.zip" -Headers $UA
     Expand-Archive "$DL\panel.zip" $DL -Force
-    # CAMINHO NOVO do core. Tenta o atual e cai no antigo (releases <= v3.x tinham na raiz).
-    $okCore = $false
-    foreach ($u in @("https://raw.githubusercontent.com/$REPO/$tag/python_old_project/tbh_core.py",
-                     "https://raw.githubusercontent.com/$REPO/$tag/tbh_core.py")) {
-      try {
-        Invoke-WebRequest $u -OutFile "$DL\tbh_core.py.new" -Headers $UA
-        if ((Get-Item "$DL\tbh_core.py.new").Length -gt 100000) {
-          Move-Item "$DL\tbh_core.py.new" "$DL\tbh_core.py" -Force; $okCore = $true
-          Log "tbh_core.py atualizado de $u"; break
-        }
-      } catch { }
-    }
-    if (-not $okCore) { Log "AVISO: nao consegui baixar o tbh_core.py (mantive o que ja tinha)" }
     Set-Content "$DL\ver.txt" $tag
-    Remove-Item "$DL\cache\offsets_*.json" -Force -ErrorAction SilentlyContinue   # offsets de build/extrator antigo
   } else { Log "painel ja esta na $tag" }
 } catch { Log "download do release falhou: $($_.Exception.Message)" }
 
+# ---------- 3b) scripts python: SEMPRE do main, NUNCA presos a tag ----------
+# Ficavam dentro do "if tag mudou" do passo 3. Como correcao de tbh_core.py entra no main sem cortar
+# release, a box na mesma tag nunca pegava o conserto -- foi assim que tres instancias ficaram com um
+# core velho (sem o fix do godmode) por dias. Sao arquivos pequenos: baixar todo sync sai de graca.
+foreach ($f in @(
+  @{ url = "https://raw.githubusercontent.com/$REPO/main/python_old_project/tbh_core.py"; dst = "$DL\tbh_core.py";   min = 100000 },
+  @{ url = "https://raw.githubusercontent.com/$REPO/main/box/tbh_unlock.py";              dst = "$DL\tbh_unlock.py"; min = 500    }
+)) {
+  try {
+    Invoke-WebRequest $f.url -OutFile "$($f.dst).new" -Headers $UA
+    if ((Get-Item "$($f.dst).new").Length -ge $f.min) {          # trunca/404 nao substitui o que funciona
+      Move-Item "$($f.dst).new" $f.dst -Force
+      Log ("{0} atualizado ({1} bytes)" -f (Split-Path $f.dst -Leaf), (Get-Item $f.dst).Length)
+    } else {
+      Remove-Item "$($f.dst).new" -Force -EA SilentlyContinue
+      Log ("AVISO: {0} veio pequeno demais - mantive o que ja tinha" -f (Split-Path $f.dst -Leaf))
+    }
+  } catch { Log ("AVISO: nao baixei {0}: {1}" -f (Split-Path $f.dst -Leaf), $_.Exception.Message) }
+}
+Remove-Item "$DL\__pycache__\tbh_core*.pyc" -Force -ErrorAction SilentlyContinue
+
 # ---------- 4) offsets do build instalado, direto do FEED (nao precisa do jogo aberto) ----------
+# O cache so vale se for do EXTRATOR novo (_ver >= 7) e tiver o dispatcher (upd/llx). Sem upd/llx o
+# painel loga "dispatcher: offset upd/llx missing" e auto-box/auto-stash/auto-boss ficam mortos --
+# foi exatamente esse o estado de uma instancia que ficou com offsets do build anterior.
+function OffsetsOk($p) {
+  if (-not (Test-Path $p)) { return $false }
+  try { $j = Get-Content $p -Raw | ConvertFrom-Json } catch { return $false }
+  return ($j._ver -ge 7 -and $j.gra -and $j.upd -and $j.llx)
+}
 if ($hash) {
   $dest = "$DL\cache\offsets_$hash.json"
-  if (Test-Path $dest) {
-    Log "offsets do build $hash ja estao no cache"
+  if (OffsetsOk $dest) {
+    Log "offsets do build $hash ja estao no cache e sao validos"
   } else {
+    if (Test-Path $dest) { Log "offsets do build $hash no cache sao invalidos/antigos - rebaixando" }
     try {
       Invoke-WebRequest "https://raw.githubusercontent.com/$REPO/main/offsets/offsets_$hash.json" `
-        -OutFile $dest -Headers $UA
-      $j = Get-Content $dest -Raw | ConvertFrom-Json
-      if ($j._ver -ge 7 -and $j.gra) { Log "offsets do build $hash baixados do feed (_ver=$($j._ver))" }
-      else { Remove-Item $dest -Force; Log "AVISO: json do feed invalido/antigo - descartado" }
+        -OutFile "$dest.new" -Headers $UA
+      if (OffsetsOk "$dest.new") {
+        Move-Item "$dest.new" $dest -Force
+        Log "offsets do build $hash baixados do feed"
+      } else {
+        Remove-Item "$dest.new" -Force -EA SilentlyContinue
+        Log "AVISO: json do feed invalido/antigo - descartado (mantive o cache anterior)"
+      }
     } catch {
       Log "AVISO: build $hash ainda nao esta no feed (offsets/) - o painel roda so com AOB ate publicar"
     }
