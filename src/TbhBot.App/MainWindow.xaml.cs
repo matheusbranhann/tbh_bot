@@ -29,6 +29,9 @@ public partial class MainWindow : Window
 
         Show(NavTrainer);
         _svc.Start();
+        // Onde os perfis moram (pasta do exe). Loga também o BaseDirectory: num publish single-file ele
+        // pode ser a pasta temporária de extração — é o que justifica usar ProcessPath pra persistir.
+        _svc.RaiseLog($"perfis: {ProfileStore.ExeDir}  (BaseDirectory={AppContext.BaseDirectory})");
         UpdateConn();
         Closed += (_, _) => _svc.Stop();
         _ = CheckUpdateAsync();

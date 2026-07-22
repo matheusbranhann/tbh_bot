@@ -56,6 +56,7 @@ public sealed class TrainerView : UserControl
     public TrainerView(EngineService svc)
     {
         _svc = svc;
+        _profStore.Log = _svc.RaiseLog;      // antes do 1º Load: a migração pro lado do exe avisa na status bar
         _cubeLabel = MonoText("cubo: --");
 
         var stack = new StackPanel();
@@ -436,8 +437,10 @@ public sealed class TrainerView : UserControl
     {
         string name = (_profCombo.Text ?? "").Trim();
         if (name.Length == 0) { _svc.RaiseLog("digite um nome pro profile primeiro"); return; }
-        var all = _profStore.Load(); all[name] = Capture(); _profStore.Save(all);
-        RefreshProfileCombo(name); _svc.RaiseLog($"profile '{name}' salvo ✓");
+        var all = _profStore.Load(); all[name] = Capture();
+        _profStore.Save(all);
+        RefreshProfileCombo(name);
+        _svc.RaiseLog($"profile '{name}' salvo ✓ → {_profStore.ResolvedPath}");
     }
 
     private void LoadProfile()
