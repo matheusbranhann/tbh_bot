@@ -12,6 +12,17 @@ public sealed class SymbolTable
     private string? _invClass;
     private string? _raClass;
 
+    /// <summary>
+    /// Versão mínima do extrator (<c>_ver</c> no json) aceita num cache EM DISCO. Espelha o
+    /// <c>_EXTRACT_VER</c> do Python — **bumpar os dois juntos** quando a extração mudar.
+    ///
+    /// Sem esta checagem, um cache com offset errado grava no disco do usuário e é usado PARA SEMPRE:
+    /// o cache tem prioridade sobre os offsets embutidos, então a correção publicada nunca chegava.
+    /// Foi exatamente o que aconteceu com o alvo do ACTk (v7): quem já tinha baixado o json v6 do
+    /// feed continuaria com o alvo que derruba o jogo mesmo depois do fix.
+    /// </summary>
+    public const int MinExtractVer = 7;
+
     /// <summary>Equivale a <c>self.sym.get(key, def)</c>: retorna o valor ou o default (0) se ausente.</summary>
     public long Get(string key, long def = 0) => _sym.TryGetValue(key, out var v) ? v : def;
 
@@ -63,19 +74,30 @@ public sealed class SymbolTable
     /// string->numero, com <c>ynj</c> (lista) e <c>inv_class</c> (string). É a ponte enquanto a extração
     /// por dump em C# não é portada — reaproveita o que o engine Python já resolveu para o build atual.
     /// </summary>
-    public bool LoadOffsetsJson(string path)
+    /// <param name="requireVersion">
+    /// true para caches EM DISCO (cache local / baixado do feed): exige <c>_ver &gt;= MinExtractVer</c>,
+    /// senão o arquivo é rejeitado como obsoleto. Os offsets EMBUTIDOS no exe não precisam (vieram
+    /// junto com este build) — e o json do build antigo nem tem <c>_ver</c>.
+    /// </param>
+    public bool LoadOffsetsJson(string path, bool requireVersion = false)
     {
         if (!File.Exists(path)) return false;
-        try { using var s = File.OpenRead(path); return LoadOffsetsJson(s); }
+        try { using var s = File.OpenRead(path); return LoadOffsetsJson(s, requireVersion); }
         catch { return false; }
     }
 
     /// <summary>Idem, a partir de um <see cref="Stream"/> (ex.: recurso embutido no assembly).</summary>
-    public bool LoadOffsetsJson(Stream stream)
+    public bool LoadOffsetsJson(Stream stream, bool requireVersion = false)
     {
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(stream);
+            if (requireVersion)
+            {
+                if (!doc.RootElement.TryGetProperty("_ver", out var ve) ||
+                    !ve.TryGetInt32(out var ver) || ver < MinExtractVer)
+                    return false;                      // cache de extrator antigo -> descarta
+            }
             var ynj = new List<long>();
             foreach (var p in doc.RootElement.EnumerateObject())
             {

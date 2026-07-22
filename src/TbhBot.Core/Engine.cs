@@ -76,7 +76,10 @@ public sealed class Engine : IDisposable
                     Path.Combine(AppContext.BaseDirectory, $"offsets_{hash}.json"),
                 })
                 {
-                    if (Symbols.LoadOffsetsJson(cand))
+                    // requireVersion: cache em disco de extrator antigo é DESCARTADO (senão um offset
+                    // errado gravado uma vez sobrevive a todas as correções — o cache tem prioridade
+                    // sobre os embutidos). Ver SymbolTable.MinExtractVer.
+                    if (Symbols.LoadOffsetsJson(cand, requireVersion: true))
                     {
                         loaded = true;
                         Emit($"offsets carregados do cache {Path.GetFileName(cand)}");
@@ -136,7 +139,7 @@ public sealed class Engine : IDisposable
     /// </summary>
     public bool LoadOffsetsFrom(string path)
     {
-        if (Symbols is null || !Symbols.LoadOffsetsJson(path)) return false;
+        if (Symbols is null || !Symbols.LoadOffsetsJson(path, requireVersion: true)) return false;
         OffsetsLoaded = true;
         Emit($"offsets do build {BuildHash} baixados do feed — features completas de volta");
         return true;

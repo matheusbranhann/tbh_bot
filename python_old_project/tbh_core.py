@@ -264,6 +264,30 @@ def game_version():
     _GV[h]=v
     return v
 
+_ACTK_SHAPE=(".ctor","override void ()","T ()","static InjectionDetector ()",
+             "static void ()","static void (Action<string>)","static void ()","static void ()")
+
+def _actk_target(ddir):
+    """RVA(s) do detector ACTk a neutralizar. Ancora na CLASSE `InjectionDetector` — nome em claro
+    (o CodeStage/ACTk preserva os nomes de classe; os METODOS e que sao ofuscados e deslocam a cada
+    build: ynb..ynj -> yof..yon no update 07-22).
+
+    Alvo = o `static void ()` de MAIOR RVA da classe (era o que o build que funcionava patchava).
+    So aceita se a classe tiver a FORMA esperada do ACTk (8 metodos, 3 `static void ()`) — se a
+    forma mudar, retorna [] e o bypass fica DESLIGADO de proposito. **Falha fechado**: bypass
+    faltando so incomoda; patch no lugar errado fecha o jogo do usuario.
+    """
+    try: classes=_a_parse_dump(os.path.join(ddir,"dump.cs"))
+    except Exception: return []
+    inj=next((k for k in classes if k.name=="InjectionDetector"), None)
+    if not inj: return []
+    ms=sorted(inj.methods)
+    if len(ms)!=len(_ACTK_SHAPE): return []                      # classe mudou -> nao chuta
+    voids=[rva for rva,sig in ms
+           if (p:=_a_sig(sig)) and p[0] and p[1]=="void" and not p[3]]   # static void, sem args
+    if len(voids)!=3: return []
+    return [max(voids)]
+
 def _extract_from_dump(ddir):
     """Extrai RVAs por ancoras ESTAVEIS (nomes nao-ofuscados + vtable slots),
     imune a ofuscacao renomear classes/metodos a cada build."""
@@ -273,8 +297,12 @@ def _extract_from_dump(ddir):
     except Exception: src=""
     try: txt=open(sj,encoding="utf-8",errors="ignore").read()
     except Exception: txt=""
-    # ynj (ACTk) — nome estavel (CodeStage). regex tolerante a espaco/quebra (JSON pretty-printed)
-    out["ynj"]=[int(a) for a in re.findall(r'"Address":\s*(\d+),\s*"Name":\s*"[^"]*\$\$ynj"',txt)]
+    # ynj (ACTk) — ver _actk_target(). NUNCA voltar a casar pelo NOME '$$ynj': 'ynj' e nome OFUSCADO,
+    # nao "estavel do CodeStage" como dizia o comentario antigo. No build 535f o ofuscador reciclou o
+    # nome pra OUTRA classe (dej$$ynj) cujo corpo caiu num POOL DE GETTERS deduplicados
+    # (0x700790 = 'mov rax,[rcx+0x10]; ret', compartilhado por centenas de metodos do runtime):
+    # escrever 0xC3 ali fazia todo getter do jogo devolver lixo -> CRASH na hora de ligar o bypass.
+    out["ynj"]=_actk_target(ddir)
     # gra (hitkill) — Monster (nome estavel) + Slot 45 + (DamageInfo a, bool b = False)
     mc=re.search(r'\bclass Monster\s*:',src)
     if mc:
@@ -737,7 +765,7 @@ def _data_anchors(ddir):
 # e nao estiverem aqui, o auto-fuse so nao AUTO-ABRE o cubo (degradacao graciosa) — o resto auto-resolve.
 _KNOWN_UI_HANDLERS={"c824ed7a2bb1":{"eby":0x839BB0,"hgr":0xC362A0}}
 
-_EXTRACT_VER=6   # BUMPAR sempre que a extracao mudar: invalida os caches antigos. Sem isso um offset
+_EXTRACT_VER=7   # BUMPAR sempre que a extracao mudar: invalida os caches antigos. Sem isso um offset
                  # errado fica gravado no disco e o fix nao chega em quem ja rodou o painel.
 _CRIT_SYMS=("gra","upd","llx","iw","ra_class","ilo","ipu","imx","inf","ili","iog","ioa","ima","iuw","izb","inv_slots_off","stash_off")
 def _offsets_ok(got):

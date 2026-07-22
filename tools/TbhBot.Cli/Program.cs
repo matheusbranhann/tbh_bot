@@ -64,6 +64,98 @@ if (args.Contains("--feed"))
     return;
 }
 
+// ACTk SOAK: liga o bypass e SEGURA, checando que o jogo continua vivo e lendo. O --e2e só aplica e
+// reverte na hora — não pegaria o crash que o alvo errado (pool de getters do runtime) causava.
+if (args.Contains("--actk-soak"))
+{
+    int si = Array.IndexOf(args, "--actk-soak");
+    int secs = si + 1 < args.Length && int.TryParse(args[si + 1], out var sv) ? sv : 45;
+    var ae = new TbhBot.Core.Engine();
+    if (!ae.Attach()) { Console.WriteLine("[x] jogo não está aberto"); return; }
+    Console.WriteLine($"attach pid={ae.Target.ProcessId} build={ae.BuildHash} offsets={ae.OffsetsLoaded}");
+
+    var rvas = ae.Symbols.Ynj;
+    if (rvas.Count == 0) { Console.WriteLine("[FAIL] ynj vazio — sem alvo ACTk"); return; }
+    foreach (var r in rvas)
+    {
+        var b = ae.Memory.ReadBytes(ae.Target.ModuleBase + (nint)r, 12);
+        Console.WriteLine($"  alvo 0x{r:X}  bytes: {Convert.ToHexString(b)}");
+        // stub deduplicado = 'ret' logo no início; detector de verdade abre com prólogo (push/sub rsp)
+        bool stub = Array.IndexOf(b, (byte)0xC3, 0, Math.Min(12, b.Length)) >= 0;
+        Console.WriteLine($"  parece stub compartilhado? {(stub ? "SIM -> alvo ERRADO" : "não -> função real")}");
+    }
+
+    Console.WriteLine($"\nligando ACTk e segurando {secs}s...");
+    ae.Cheats.Log = m => Console.WriteLine("  [cheats] " + m);
+    ae.Cheats.SetActk(true);
+    foreach (var r in rvas)
+        Console.WriteLine($"  0x{r:X} agora = {Convert.ToHexString(ae.Memory.ReadBytes(ae.Target.ModuleBase + (nint)r, 1))}");
+
+    var sw = Stopwatch.StartNew();
+    bool died = false;
+    while (sw.Elapsed.TotalSeconds < secs)
+    {
+        await Task.Delay(3000);
+        if (!ae.Target.IsAlive()) { died = true; break; }
+        var (mx, cur, wv) = ae.Save.StageProgress();   // prova que o jogo continua LENDO/rodando
+        Console.WriteLine($"  t={sw.Elapsed.TotalSeconds,4:0}s vivo · max={mx} cur={cur} wave={wv}");
+    }
+    Console.WriteLine(died
+        ? $"\n[FAIL] o jogo FECHOU depois de {sw.Elapsed.TotalSeconds:0}s com o ACTk ligado"
+        : $"\n[PASS] jogo vivo e respondendo os {secs}s inteiros com o ACTk ligado");
+    ae.Cheats.SetActk(false);
+    Console.WriteLine("ACTk revertido; jogo vivo=" + ae.Target.IsAlive());
+    return;
+}
+
+// EVOLUÇÃO: valida a regra "sobe UMA fase por vez e desliga sozinho no Torment 3-9". Simula a
+// cadeia Next a partir do estágio atual SEM navegar (não mexe no progresso de quem está jogando)
+// e executa Evolve() de verdade só pra confirmar o auto-desligar quando já se está no topo.
+if (args.Contains("--evolve"))
+{
+    var ev = new TbhBot.Core.Engine();
+    ev.Log += m => Console.WriteLine($"  [engine] {m}");
+    if (!ev.Attach()) { Console.WriteLine("[x] jogo não aberto"); return; }
+    var (mx, cur, wave) = ev.Save.StageProgress();
+    var tb = ev.StageNav.StageTable();
+    Console.WriteLine($"estado: max={mx} cur={cur} wave={wave} · tabela={tb.Count} estágios");
+
+    // 1) a corrente Next sobe de 1 em 1 até 4309? Testa do estágio ATUAL e do 1-1 Normal (1101) —
+    //    o caso que o usuário descreveu. É só caminhada na tabela: não navega, não muda nada no jogo.
+    static (int End, int Steps, List<int> Path) Walk(int from, Dictionary<int, TbhBot.Core.Game.StageInfo> t)
+    {
+        int node = from, steps = 0; var path = new List<int>();
+        while (node > 0 && node < 4309 && steps < 500 && t.TryGetValue(node, out var ni))
+        {
+            if (ni.Next <= 0 || ni.Next == node) break;
+            node = ni.Next; path.Add(node); steps++;
+        }
+        return (node, steps, path);
+    }
+    foreach (var (label, from) in new[] { ("estágio atual", cur), ("1-1 Normal", 1101) })
+    {
+        var (end, steps, path) = Walk(from, tb);
+        bool ok = end == 4309 || from >= 4309;
+        Console.WriteLine($"[{(ok ? "PASS" : "FAIL")}] de {label} ({from}): {steps} passos até {end}" +
+            (path.Count > 0 ? $" · {string.Join(" -> ", path.Take(5))}{(path.Count > 5 ? " ... -> " + path[^1] : "")}" : " (já no topo)"));
+        if (path.Count > 0)
+            Console.WriteLine($"[{(path[0] != 4309 || steps == 1 ? "PASS" : "FAIL")}] não teleporta: 1º alvo = {path[0]} (não 4309 de cara)");
+    }
+
+    // 2) auto-desligar: com cur >= 4309, Evolve tem que chamar DisableEvolve e não navegar.
+    bool disabled = false;
+    ev.StageAutomation.DisableEvolve = () => disabled = true;
+    int before = ev.Save.StageProgress().Cur;
+    bool acted = ev.StageAutomation.Evolve(() => true);
+    int after = ev.Save.StageProgress().Cur;
+    if (cur >= 4309)
+        Console.WriteLine($"[{(disabled && !acted && after == before ? "PASS" : "FAIL")}] no topo: desligou sozinho={disabled} navegou={acted} (estágio {before}->{after})");
+    else
+        Console.WriteLine($"      (fora do topo: Evolve retornou {acted}, estágio {before}->{after}, desligou={disabled})");
+    Console.WriteLine($"jogo vivo={ev.Target.IsAlive()}");
+    return;
+}
+
 // Teste do AUTO-BOX ao vivo: acha StageBox vivas + conta iuw + abre as esperando (llx via dispatcher).
 if (args.Contains("--autobox"))
 {

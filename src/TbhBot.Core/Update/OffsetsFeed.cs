@@ -46,10 +46,11 @@ public static class OffsetsFeed
             var body = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
             if (body.Length is < 512 or > 4_000_000) return null; // tamanho fora do plausível -> não é o arquivo
 
-            // Só grava se realmente carregar e trouxer os símbolos que importam.
+            // Só grava se carregar, for de um extrator ATUAL (_ver) e trouxer os símbolos que importam.
+            // Sem o requireVersion, um json antigo publicado no feed viraria cache tóxico permanente.
             var probe = new Il2Cpp.SymbolTable();
             using (var ms = new MemoryStream(body))
-                if (!probe.LoadOffsetsJson(ms)) return null;
+                if (!probe.LoadOffsetsJson(ms, requireVersion: true)) return null;
             if (!probe.Has("gra") || !probe.Has("uo_ti")) return null;
 
             var path = CachePath(hash);
