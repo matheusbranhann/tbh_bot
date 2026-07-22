@@ -1,5 +1,6 @@
-"""Desbloqueios one-shot chamados pelo dashboard: 'stages' (todas as 120 fases) e 'runes' (todas no max).
-Ambos sao client-side. Cuidado embutido: runa NUNCA passa do teto dela (bgpe) -- passar do teto
+"""Desbloqueios one-shot chamados pelo dashboard: 'stages' (as 120 fases), 'runes' (todas no max)
+e 'cube' (nivel 100 do cubo, que e o que libera a sintese dos tiers 65~80).
+Os tres sao client-side. Cuidado embutido: runa NUNCA passa do teto dela (bgpe) -- passar do teto
 gera NRE em RuneNode e o jogo fica em loading infinito."""
 import sys
 HERE = r"C:\tbh_auto"
@@ -9,8 +10,8 @@ import tbh_core as C
 TARGET = 4310                       # TORMENT 3-10, a maior StageKey -> libera as 120
 
 what = (sys.argv[1] if len(sys.argv) > 1 else "").lower()
-if what not in ("stages", "runes"):
-    print("uso: tbh_unlock.py [stages|runes]")
+if what not in ("stages", "runes", "cube"):
+    print("uso: tbh_unlock.py [stages|runes|cube]")
     raise SystemExit(1)
 
 e = C.Engine(log=lambda m: print("[eng]", m, flush=True))
@@ -30,6 +31,23 @@ if what == "stages":
     print("maxCompletedStage -> %d (120/120 liberadas) | ok=%s" % (val, ok))
     print("NOTA: escrever esse valor forca o jogo a fechar em ~12s, MAS persiste;")
     print("      o watchdog reabre e o progresso volta ja liberado.")
+
+elif what == "cube":
+    # O nivel do cubo indexa a lista de recipes (bam.mey): cubo baixo NAO enxerga o tier 65~80.
+    alvo = e.CUBE_MAX_LEVEL
+    lv = e.cube_level()
+    print("nivel do cubo atual: %s (max %d)" % (lv, alvo))
+    if lv is None:
+        print("ERRO: o cubo ainda nao resolveu na memoria - espere o jogo carregar e tente de novo")
+        raise SystemExit(3)
+    if lv >= alvo:
+        # Mesmo caso do stages: escrever o ObscuredInt derruba o jogo por ~12s. Nao vale se ja esta no teto.
+        print("ja esta no nivel %d - nada a fazer" % lv)
+        raise SystemExit(0)
+    ok, val = e.set_cube_level(alvo)
+    print("nivel do cubo -> %d | ok=%s" % (val, ok))
+    print("NOTA: escrever esse valor forca o jogo a fechar em ~12s, MAS persiste;")
+    print("      o watchdog reabre e o cubo volta ja no nivel novo (libera o tier 65~80).")
 else:
     def censo():
         """(no_maximo, abaixo, total) lendo a lista de runas do save. None se nao deu pra ler --
