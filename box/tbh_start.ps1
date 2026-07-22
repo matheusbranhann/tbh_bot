@@ -36,8 +36,18 @@ if (-not (GameUp)) { Log "jogo nao subiu (login pendente) -- supervisor cuida" }
 #    (o bloco antigo baixava o tbh_core.py da RAIZ do repo -- caminho que morreu na v4.0, quando o
 #    projeto Python foi pra python_old_project/ -- e "materializava" offsets rodando o painel com o
 #    jogo carregado. Agora os offsets vem do feed pelo hash do GameAssembly.dll no disco.)
-& powershell -NoProfile -ExecutionPolicy Bypass -File "$DL	bh_sync.ps1" 2>&1 | Out-Null
-Log "sync (painel/core/offsets) executado"
+# NOTA: caminho com BARRA NORMAL de proposito. Aqui ja houve um TAB literal onde devia estar a
+# barra invertida seguida de "t" (o arquivo foi gravado por uma camada que interpretou o escape),
+# entao o -File apontava pra um caminho inexistente -- e o Out-Null engolia o erro. Resultado: o
+# sync NUNCA rodou na subida da box, e as instancias foram acumulando core/offsets velhos.
+$sync = "C:/tbh_auto/tbh_sync.ps1"
+if (-not (Test-Path $sync)) {
+  Log "ERRO: $sync nao existe -- a box vai subir com o que ja tinha"
+} else {
+  $null = & powershell -NoProfile -ExecutionPolicy Bypass -File $sync 2>&1
+  if ($LASTEXITCODE -ne 0) { Log "AVISO: tbh_sync saiu com codigo $LASTEXITCODE" }
+  Log "sync (painel/core/offsets) executado"
+}
 if (-not (Test-Path "$DL\profiles.json")) { Copy-Item "$env:USERPROFILE\Desktop\profiles.json" "$DL\profiles.json" -Force; Log "profiles.json copiado do Desktop" }
 
 # 4) mata autopilot/supervisor antigos (PID file; WMI bloqueado) e sobe SO o SUPERVISOR
