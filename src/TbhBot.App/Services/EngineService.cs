@@ -63,9 +63,26 @@ public sealed class EngineService
                 last = now;
                 Post(() => StateChanged?.Invoke());
             }
+            // Jogo atualizou pra um build que este exe não conhece? Tenta baixar os offsets do feed do
+            // repo (JSON de ~13 KB). Uma vez por hash — 404 significa que ainda não publiquei esse build.
+            if (now && !Engine.OffsetsLoaded && Engine.BuildHash is { Length: > 0 } h && _feedTried != h)
+            {
+                _feedTried = h;
+                _ = FetchOffsetsAsync(h, ct);
+            }
             try { await Task.Delay(1000, ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
         }
+    }
+
+    // Hash já tentado no feed (não fica batendo no GitHub a cada tick de 1s).
+    private string? _feedTried;
+
+    private async Task FetchOffsetsAsync(string hash, CancellationToken ct)
+    {
+        var path = await TbhBot.Core.Update.OffsetsFeed.TryFetchAsync(hash, ct).ConfigureAwait(false);
+        if (path is null || ct.IsCancellationRequested) return;
+        if (Engine.LoadOffsetsFrom(path)) Post(() => StateChanged?.Invoke());
     }
 
     /// <summary>Abre o jogo via Steam (steam://run/&lt;appid&gt;). Usado pelo Auto-restart e pelo botão de launcher.</summary>

@@ -9,6 +9,8 @@
     <PlatformTarget>x64</PlatformTarget>
     <Company>matheusbranhann</Company>
     <Product>TbhBot</Product>
-    <Version>0.1.0</Version>
+    <!-- Versão do release. O AutoUpdate lê daqui (via assembly) pra comparar com o GitHub —
+         BUMPAR a cada release, senão o painel publicado nunca se vê como desatualizado. -->
+    <Version>4.1.0</Version>
   </PropertyGroup>
 </Project>

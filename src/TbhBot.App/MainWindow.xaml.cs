@@ -4,6 +4,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using TbhBot.App.Services;
 using TbhBot.App.Views;
+using TbhBot.Core.Update;
 
 namespace TbhBot.App;
 
@@ -30,6 +31,72 @@ public partial class MainWindow : Window
         _svc.Start();
         UpdateConn();
         Closed += (_, _) => _svc.Stop();
+        _ = CheckUpdateAsync();
+    }
+
+    // ══════════════════ AUTO-UPDATE DO PAINEL ══════════════════
+    // É o que faz o painel voltar a funcionar sozinho quando O JOGO atualiza: cada release já sai
+    // com os offsets do build novo embutidos, então baixar a versão nova cura tudo — sem exigir
+    // .NET 6 / Il2CppDumper na máquina de quem usa.
+    private readonly AutoUpdate _upd = new();
+    private string _updUrl = "", _updTag = "";
+    private bool _updBusy;
+
+    private async Task CheckUpdateAsync()
+    {
+        var (available, tag, url) = await _upd.CheckAsync(AutoUpdate.CurrentVersion);
+        if (!available) return;
+        _updUrl = url; _updTag = tag;
+        RefreshBanner();
+    }
+
+    /// <summary>Decide a mensagem do banner. UM lugar só — senão o aviso de build novo e o de versão
+    /// nova ficam se sobrescrevendo conforme a ordem em que chegam.</summary>
+    private void RefreshBanner()
+    {
+        if (_updBusy) return;                                  // download em andamento: não mexe
+        bool unknownBuild = _svc.IsAttached && !_svc.Engine.OffsetsLoaded;
+        bool hasUpdate = _updUrl.Length > 0;
+        if (!unknownBuild && !hasUpdate) { UpdateBanner.Visibility = Visibility.Collapsed; return; }
+
+        string build = _svc.Engine.BuildHash is { Length: >= 7 } h ? h[..7] : "?";
+        if (unknownBuild)
+        {
+            // Mais urgente: o usuário está vendo features sumirem. Explica o porquê e o que resolve.
+            UpdateTitle.Text = "O jogo atualizou — este painel ainda não conhece esse build";
+            UpdateDesc.Text = hasUpdate
+                ? $"Baixe a {_updTag}: ela já vem com os offsets do build {build}. Sem isso, só os cheats por AOB funcionam."
+                : $"Build {build} desconhecido. Só os cheats por AOB funcionam até sair uma versão nova do painel.";
+        }
+        else
+        {
+            UpdateTitle.Text = $"Nova versão disponível: {_updTag}";
+            UpdateDesc.Text  = $"Você está na v{AutoUpdate.CurrentVersion}. A versão nova já vem com os offsets do build atual do jogo.";
+        }
+        UpdateBtn.Visibility = hasUpdate ? Visibility.Visible : Visibility.Collapsed;
+        UpdateBanner.Visibility = Visibility.Visible;
+    }
+
+    private async void OnUpdateNow(object sender, RoutedEventArgs e)
+    {
+        if (_updBusy || _updUrl.Length == 0) return;
+        _updBusy = true;
+        UpdateBtn.IsEnabled = false;
+        try
+        {
+            var prog = new Progress<double>(p => UpdateBtn.Content = $"BAIXANDO {p * 100:0}%");
+            var (newExe, exe, dir) = await _upd.DownloadAndStageAsync(_updUrl, prog);
+            UpdateBtn.Content = "REINICIANDO...";
+            _upd.LaunchUpdater(newExe, exe, dir);   // troca o exe depois que ESTE processo sair
+            Close();
+        }
+        catch (Exception ex)
+        {
+            UpdateBtn.Content = "ATUALIZAR AGORA";
+            UpdateBtn.IsEnabled = true;
+            _updBusy = false;
+            UpdateDesc.Text = $"Falhou: {ex.Message} — baixe manualmente em github.com/{AutoUpdate.Repo}/releases";
+        }
     }
 
     private void Register(RadioButton nav, UserControl view, string title)
@@ -82,6 +149,7 @@ public partial class MainWindow : Window
             LaunchBtn.Content = "LAUNCH ENGINE";
             LaunchBtn.IsEnabled = true;
         }
+        RefreshBanner();
     }
 
     private void OnLaunchGame(object sender, RoutedEventArgs e) => _svc.LaunchGame();

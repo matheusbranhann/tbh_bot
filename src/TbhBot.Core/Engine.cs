@@ -129,5 +129,18 @@ public sealed class Engine : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Carrega um cache de offsets DEPOIS do attach — usado pelo <see cref="Update.OffsetsFeed"/> quando o
+    /// jogo atualizou e o build ainda não é conhecido por este exe. Cura a sessão em andamento: as features
+    /// que dependem de RVA voltam sem precisar reiniciar o painel.
+    /// </summary>
+    public bool LoadOffsetsFrom(string path)
+    {
+        if (Symbols is null || !Symbols.LoadOffsetsJson(path)) return false;
+        OffsetsLoaded = true;
+        Emit($"offsets do build {BuildHash} baixados do feed — features completas de volta");
+        return true;
+    }
+
     public void Dispose() => Target.Dispose();
 }

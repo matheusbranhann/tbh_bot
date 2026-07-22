@@ -98,6 +98,26 @@
                     </StackPanel>
                 </Grid>
 
+                <!-- banner de update do PAINEL / aviso de build de jogo desconhecido.
+                     Some por padrão; aparece quando há release nova ou quando o jogo atualizou. -->
+                <Border x:Name="UpdateBanner" DockPanel.Dock="Top" Visibility="Collapsed"
+                        Margin="40,0,40,16" Padding="18,14" CornerRadius="14"
+                        Background="#1AFBBF24" BorderBrush="#59FBBF24" BorderThickness="1">
+                    <DockPanel>
+                        <Button x:Name="UpdateBtn" DockPanel.Dock="Right" Margin="18,0,0,0"
+                                VerticalAlignment="Center" Style="{StaticResource Accent.Button}"
+                                Content="ATUALIZAR AGORA" Click="OnUpdateNow"/>
+                        <TextBlock DockPanel.Dock="Left" Text="⬆" FontSize="20" Margin="0,0,14,0"
+                                   VerticalAlignment="Center" Foreground="{StaticResource Amber}"/>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="UpdateTitle" Foreground="{StaticResource Amber}"
+                                       FontSize="14" FontWeight="SemiBold" Text="Nova versão disponível"/>
+                            <TextBlock x:Name="UpdateDesc" Style="{StaticResource Sub.Text}"
+                                       Margin="0,3,0,0" TextWrapping="Wrap" Text=""/>
+                        </StackPanel>
+                    </DockPanel>
+                </Border>
+
                 <!-- área de conteúdo (as 5 views, alternadas pela nav). SEM ScrollViewer externo:
                      cada view rola SOZINHA (senão o scroll interno de Inventory/Runes conflita). -->
                 <Grid x:Name="ContentHost" Margin="40,0,40,0"/>

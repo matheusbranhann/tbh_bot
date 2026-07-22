@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Reflection;
 using System.Text.Json;
 
 namespace TbhBot.Core.Update;
@@ -8,19 +9,34 @@ namespace TbhBot.Core.Update;
 /// Auto-update via GitHub Releases — porta de check_update/download_update/launch_updater
 /// do tbh_core.py (~linhas 16-92).
 ///
-/// NOTA: <see cref="Repo"/> e <see cref="CurrentVersion"/> sao o TRILHO DE RELEASE do build C#.
-/// Enquanto o .exe C# nao tem release proprio publicado, sao PLACEHOLDER: o repo continua sendo
-/// o do bot Python (matheusbranhann/taskbarhero-bot) e a versao vem do assembly. Quando houver
-/// pipeline de release do TbhBot C#, bumpar <see cref="CurrentVersion"/> a cada release e (se for
-/// outro repo) trocar <see cref="Repo"/>.
+/// E o caminho que faz o painel se curar sozinho quando O JOGO atualiza: cada release ja sai com os
+/// offsets do build novo embutidos (Offsets/offsets_&lt;hash&gt;.json), entao baixar a versao nova
+/// restaura tudo sem exigir .NET 6 / Il2CppDumper na maquina do usuario.
 /// </summary>
 public sealed class AutoUpdate
 {
-    // Repo de releases (PLACEHOLDER: mesmo do Python ate o exe C# ter release proprio).
+    // Repo de releases.
     public const string Repo = "matheusbranhann/taskbarhero-bot";
 
-    // Versao atual deste build (PLACEHOLDER: trilho de release C#; bumpar a cada release).
-    public const string CurrentVersion = "0.1.0";
+    /// <summary>
+    /// Versao deste build. Vem do assembly (&lt;Version&gt; do Directory.Build.props) — UM lugar so
+    /// pra bumpar por release. Hardcodar aqui ja causou release publicado com versao velha.
+    /// </summary>
+    public static readonly string CurrentVersion = ResolveVersion();
+
+    private static string ResolveVersion()
+    {
+        var asm = System.Reflection.Assembly.GetEntryAssembly() ?? typeof(AutoUpdate).Assembly;
+        var info = asm.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+                      ?.InformationalVersion;
+        // "4.1.0+abc1234" (o SDK anexa o commit) -> "4.1.0"
+        if (!string.IsNullOrWhiteSpace(info))
+        {
+            int plus = info.IndexOf('+');
+            return plus > 0 ? info[..plus] : info;
+        }
+        return asm.GetName().Version?.ToString(3) ?? "0.0.0";
+    }
 
     // User-Agent OBRIGATORIO pela API do GitHub (rejeita requests sem UA).
     private const string UserAgent = "tbh_bot-updater";

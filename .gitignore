@@ -20,7 +20,9 @@ artifacts/
 layout/web-preview/node_modules/
 layout/web-preview/.vite/
 
-# offsets cache LOCAL (gerado ao lado do exe) — mas o offsets EMBUTIDO no projeto é versionado
+# offsets cache LOCAL (gerado ao lado do exe). Versionados: os EMBUTIDOS no projeto e o FEED público
+# (offsets/), de onde todo painel instalado baixa os offsets quando o jogo atualiza.
 offsets_*.json
 !src/**/Offsets/offsets_*.json
+!offsets/offsets_*.json
 *.log

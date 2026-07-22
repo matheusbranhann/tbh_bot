@@ -287,10 +287,12 @@ def _extract_from_dump(ddir):
     if mf:
         out["inv_psd_off"]=int(mf.group(1),16)
         before=src[:mf.start()]; last=None
-        for last in re.finditer(r'public class (\w+) : nq<\1>',before): pass
+        # ANCORA GENERICA: 'class X : BASE<X>' (singleton). NAO hardcodar a base — ela e ofuscada e
+        # muda entre builds (nq -> nr no update de 07-22), o que quebrava inv_class E ra_class juntos.
+        for last in re.finditer(r'public class (\w+) : \w+<\1>',before): pass
         if last:
             X=last.group(1); out["inv_class"]=X
-            mt=re.search(r'"Address":\s*(\d+),\s*"Name":\s*"nq<'+re.escape(X)+r'>_TypeInfo"',txt)
+            mt=re.search(r'"Address":\s*(\d+),\s*"Name":\s*"\w+<'+re.escape(X)+r'>_TypeInfo"',txt)
             if mt: out["bau_ti"]=int(mt.group(1))   # generico (da a instancia direto via static)
             mk=re.search(r'"Address":\s*(\d+),\s*"Name":\s*"'+re.escape(X)+r'_TypeInfo"',txt)
             if mk: out["inv_klass_ti"]=int(mk.group(1))  # classe concreta -> klass -> scan da instancia
@@ -353,7 +355,7 @@ def _extract_from_dump(ddir):
     # ancora: ultima 'public class X : nq<X>' ANTES do metodo iw(MoveRequest, Action<>).
     if miw:
         before=src[:miw.start()]; rc=None
-        for rc in re.finditer(r'public class (\w+) : nq<\1>',before): pass
+        for rc in re.finditer(r'public class (\w+) : \w+<\1>',before): pass   # base generica (ver nota acima)
         if rc: out["ra_class"]=rc.group(1)
     # === offsets de inventario/stash em PlayerSaveData (shiftam entre builds) ===
     mio=re.search(r'List<InventorySaveData> \w+; // (0x[0-9A-Fa-f]+)',src)
@@ -373,6 +375,64 @@ def _extract_from_dump(ddir):
         for k,v in da.items():
             if v is not None: out[k]=v          # nao sobrescreve com None (mantem o extraido antes)
     except Exception: pass
+    # === handlers de UI (eby/hgr) — por ESTRUTURA, nao por build. Opcional: so afeta auto-abrir o cubo ===
+    try:
+        for k,v in _ui_handlers(ddir).items():
+            if v is not None: out[k]=v
+    except Exception: pass
+    return out
+
+def _ui_handlers(ddir):
+    """{eby,hgr}: handlers de UI que NAO tem assinatura unica (UI_Main/UIManager tem dezenas de
+    'void X()' identicos). Antes vinham hardcoded por build (_KNOWN_UI_HANDLERS) e sumiam a cada
+    update. Agora saem por ESTRUTURA, ancorados so em nomes que o ofuscador PRESERVA:
+
+      eby = handler do clique em button_Cube. UI_Main.Awake monta um UnityAction por botao; o
+            'mov r8,[rip+X]' logo depois do acesso a [this+<off de button_Cube>] aponta o slot de
+            MethodInfo*, que o ScriptMetadataMethod traduz pro RVA do metodo.
+      hgr = fecha o painel aberto. E o UNICO 'void()' de UIManager chamado pelas classes de
+            tutorial Guiding* (nomes em claro) — validado: 2 classes, 1 alvo so.
+    """
+    out={}
+    classes=_a_parse_dump(os.path.join(ddir,"dump.cs"))
+    byname={k.name:k for k in classes}
+    sj=json.load(open(os.path.join(ddir,"script.json"),encoding="utf-8"))
+    addrs=sorted(set(sj["Addresses"])); pe=_PE(GA_PATH)
+
+    # ---------- eby ----------
+    uim=byname.get("UI_Main")
+    if uim:
+        cube_off=next((off for typ,nm,off,st in uim.fields if nm=="button_Cube" and not st),None)
+        awake=next((rva for rva,sig in uim.methods if re.search(r'\bAwake\s*\(\s*\)',sig)),None)
+        if cube_off is not None and awake:
+            smm={m["Address"]:m.get("MethodAddress") for m in sj["ScriptMetadataMethod"]}
+            armed=False
+            for i in _a_dis(pe,addrs,awake):
+                op=i.op_str or ""
+                if i.mnemonic=="mov" and re.search(r'\+ 0x%x\]$'%cube_off, op): armed=True; continue
+                if armed and i.mnemonic=="mov" and op.startswith("r8, qword ptr [rip +"):
+                    slot=i.address+i.size+int(op.split("rip +")[-1].rstrip("]").strip(),16)
+                    v=smm.get(slot)
+                    if v: out["eby"]=v
+                    break
+
+    # ---------- hgr ----------
+    um=byname.get("UIManager")
+    if um:
+        voids={rva for rva,sig in um.methods
+               if (p:=_a_sig(sig)) and p[1]=="void" and not p[3] and not p[0]}
+        hits=collections.Counter()
+        for k in classes:
+            if "Guiding" not in k.name: continue
+            for rva,_sig in k.methods:
+                try:
+                    for mn,tgt in _a_flow(pe,addrs,rva,("call",)):
+                        if tgt in voids: hits[tgt]+=1
+                except Exception: pass
+        if hits:
+            top=hits.most_common()
+            # so aceita se houver um vencedor CLARO (senao e chute — melhor faltar que fechar a UI errada)
+            if len(top)==1 or top[0][1]>top[1][1]: out["hgr"]=top[0][0]
     return out
 
 def _redump():
@@ -540,6 +600,12 @@ def _stage_anchors(ddir):
     sj=json.load(open(os.path.join(ddir,"script.json"),encoding="utf-8"))
     pe=_PE(GA_PATH); addrs=sorted(set(sj["Addresses"])); out={}
     ti=lambda n: next((m["Address"] for m in sj["ScriptMetadata"] if m["Name"]==n), None)
+    def ti_any(x):
+        """TypeInfo do singleton X: tenta a instanciacao generica BASE<X>_TypeInfo (a base e OFUSCADA e
+        muda entre builds: nq -> nr no update de 07-22) e cai pro concreto X_TypeInfo."""
+        rx=re.compile(r'\w+<'+re.escape(x)+r'>_TypeInfo')
+        v=next((m["Address"] for m in sj["ScriptMetadata"] if m.get("Name") and rx.fullmatch(m["Name"])), None)
+        return v if v is not None else ti(x+"_TypeInfo")
     # uu.uo = UNICA classe estatica com static List<StageCache> E static Dictionary<int,StageCache>
     uos=[k for k in classes if " static class " in k.decl
          and any(re.fullmatch(r'List<[\w\.]*\.?StageCache>',f[0]) for f in k.fields if f[3])
@@ -555,7 +621,7 @@ def _stage_anchors(ddir):
     # bal: o campo 'stageInfoData' NAO e ofuscado (tabela desserializada por nome)
     bals=[(k,off) for k in classes for typ,nm,off,_ in k.fields if nm=="stageInfoData" and typ=="List<StageInfoData>"]
     if len(bals)!=1: raise AssertionError("bal ambiguo (%d)"%len(bals))
-    out["bal_ti"]=ti("nq<%s>_TypeInfo"%bals[0][0].name); out["stage_off"]=bals[0][1]
+    out["bal_ti"]=ti_any(bals[0][0].name); out["stage_off"]=bals[0][1]
     # HUB StageNode (nome que o Unity nao renomeia) -> os 4 alvos dentro de uo
     uom={r:s for r,s in uo.methods}
     cal={}
@@ -600,18 +666,33 @@ def _data_anchors(ddir):
     try:
         sj=json.load(open(os.path.join(ddir,"script.json"),encoding="utf-8"))
         ti=lambda n: next((m["Address"] for m in sj["ScriptMetadata"] if m["Name"]==n), None)
+        def ti_any(x):
+            """TypeInfo do singleton X (base generica/ofuscada — ver nota em _a_extract)."""
+            rx=re.compile(r'\w+<'+re.escape(x)+r'>_TypeInfo')
+            v=next((m["Address"] for m in sj["ScriptMetadata"] if m.get("Name") and rx.fullmatch(m["Name"])), None)
+            return v if v is not None else ti(x+"_TypeInfo")
     except Exception:
         ti=lambda n: None
-    # ---------- uu.Cube (campos ofuscados -> por TIPO estatico + ordem) ----------
-    cube=byname.get("uu.Cube")
+    # ---------- <ofuscado>.Cube (campos ofuscados -> por TIPO estatico + ordem) ----------
+    # A classe e 'uu.Cube'/'ux.Cube'/...: so o namespace e ofuscado, o 'Cube' fica em claro. NUNCA
+    # ancorar no nome completo (mudou uu->ux no update 07-22 e levou junto TODOS os cube_*).
+    cube=next((k for k in classes if k.name.split(".")[-1]=="Cube"
+               and any(f[0]=="List<CubeInData>" for f in k.fields)), None) or byname.get("uu.Cube")
+    # o tipo da 'recipe' (uw/uy/...) tambem e ofuscado -> deduz pelo generico ancorado em ERecipeType.
+    recipe_t="uw"
+    if cube:
+        for typ,_nm,_off,_st in cube.fields:
+            m=re.fullmatch(r'Dictionary<ERecipeType, List<(\w+)>>',typ)
+            if m: recipe_t=m.group(1); break
     def cbt(t,idx=0):
         if not cube: return None
         fs=[f[2] for f in sorted(cube.fields,key=lambda x:x[2]) if f[0]==t and f[3]]
         return fs[idx] if idx<len(fs) else None
     for sym,typ,idx in (("cube_grade","EGradeType",0),("cube_type","EItemSynthesisType",0),
                         ("cube_inlist","List<CubeInData>",0),("cube_recipe","SynthesisRecipeInfoData",0),
-                        ("cube_bers","Dictionary<ERecipeType, List<uw>>",0),("cube_beru","Dictionary<ERecipeType, uw>",0),
-                        ("cube_active","uw",0),("cube_lvrecipe","uw",1),("cube_busy","bool",0),
+                        ("cube_bers","Dictionary<ERecipeType, List<%s>>"%recipe_t,0),
+                        ("cube_beru","Dictionary<ERecipeType, %s>"%recipe_t,0),
+                        ("cube_active",recipe_t,0),("cube_lvrecipe",recipe_t,1),("cube_busy","bool",0),
                         ("cube_resultevt","Action<ECubeSynthesisResult>",0)):
         v=cbt(typ,idx)
         if v is not None: out[sym]=v
@@ -621,7 +702,7 @@ def _data_anchors(ddir):
                     if (p:=_a_sig(sig)) and p[0] and p[1]=="void" and p[3]==["ERecipeType"])
         if cand: out["ilx"]=cand[0]
     # ---------- UIManager: typeinfo + ui_main (nome preservado) ----------
-    v=ti("nq<UIManager>_TypeInfo")
+    v=ti_any("UIManager")
     if v: out["uimgr_ti"]=v
     uim=byname.get("UIManager")
     if uim:
@@ -656,7 +737,7 @@ def _data_anchors(ddir):
 # e nao estiverem aqui, o auto-fuse so nao AUTO-ABRE o cubo (degradacao graciosa) — o resto auto-resolve.
 _KNOWN_UI_HANDLERS={"c824ed7a2bb1":{"eby":0x839BB0,"hgr":0xC362A0}}
 
-_EXTRACT_VER=5   # BUMPAR sempre que a extracao mudar: invalida os caches antigos. Sem isso um offset
+_EXTRACT_VER=6   # BUMPAR sempre que a extracao mudar: invalida os caches antigos. Sem isso um offset
                  # errado fica gravado no disco e o fix nao chega em quem ja rodou o painel.
 _CRIT_SYMS=("gra","upd","llx","iw","ra_class","ilo","ipu","imx","inf","ili","iog","ioa","ima","iuw","izb","inv_slots_off","stash_off")
 def _offsets_ok(got):
@@ -708,7 +789,8 @@ def resolve_symbols(log=lambda m:None):
     last={}
     for attempt in range(3):                            # retry: falhas transientes do dumper
         got=_redump()
-        got.update(_KNOWN_UI_HANDLERS.get(h,{}))   # eby/hgr: nao pinaveis por assinatura -> por build (degrada gracioso se faltar)
+        for k,v in _KNOWN_UI_HANDLERS.get(h,{}).items():
+            got.setdefault(k,v)     # so FALLBACK: o _ui_handlers ja resolve eby/hgr por estrutura
         if _offsets_ok(got):
             got["_ver"]=_EXTRACT_VER
             try: json.dump(got,open(cf,"w"))

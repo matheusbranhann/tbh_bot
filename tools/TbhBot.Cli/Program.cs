@@ -30,6 +30,40 @@ if (args.Contains("--verify-embedded"))
     return;
 }
 
+// Auto-update do PAINEL: consulta o GitHub e mostra o que o banner mostraria (não baixa nada).
+if (args.Contains("--update-check"))
+{
+    var up = new TbhBot.Core.Update.AutoUpdate();
+    var cur = TbhBot.Core.Update.AutoUpdate.CurrentVersion;
+    Console.WriteLine($"versão deste build : {cur}   (repo {TbhBot.Core.Update.AutoUpdate.Repo})");
+    var (av, tag, url) = await up.CheckAsync(cur);
+    Console.WriteLine($"release mais nova  : {(tag.Length > 0 ? tag : "(não consultou / sem tag)")}");
+    Console.WriteLine($"tem update?        : {av}");
+    if (av) Console.WriteLine($"asset .zip         : {url}");
+    else if (tag.Length > 0) Console.WriteLine("  -> já estamos na mais nova (ou o release não tem asset .zip)");
+    return;
+}
+
+// Feed de offsets: baixa offsets_<hash>.json do repo pro build informado (ou o do jogo instalado).
+// É o caminho de auto-cura quando o jogo atualiza — testa que o JSON publicado está acessível e válido.
+if (args.Contains("--feed"))
+{
+    int fi = Array.IndexOf(args, "--feed");
+    string? fh = fi + 1 < args.Length && !args[fi + 1].StartsWith("--") ? args[fi + 1] : null;
+    if (fh is null)
+    {
+        var e0 = new TbhBot.Core.Engine();
+        if (!e0.Attach()) { Console.WriteLine("passe o hash: --feed <hash> (ou abra o jogo)"); return; }
+        fh = e0.BuildHash;
+    }
+    Console.WriteLine($"buscando {TbhBot.Core.Update.OffsetsFeed.BaseUrl}/offsets_{fh}.json");
+    var got = await TbhBot.Core.Update.OffsetsFeed.TryFetchAsync(fh!);
+    Console.WriteLine(got is null
+        ? "[FAIL] não achou/não validou (build ainda não publicado no feed, ou sem rede)"
+        : $"[PASS] salvo em {got}");
+    return;
+}
+
 // Teste do AUTO-BOX ao vivo: acha StageBox vivas + conta iuw + abre as esperando (llx via dispatcher).
 if (args.Contains("--autobox"))
 {
