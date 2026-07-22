@@ -22,7 +22,8 @@ public sealed class RealDispatcher : IMainThreadDispatcher, IDisposable
     private nint _cave, _data, _upd;
     private byte[] _stolen = [];
     private bool _ready;
-    private bool _installTried;
+    private long _nextInstallAt;                 // cooldown do retry de Install() (Environment.TickCount64)
+    private const int InstallRetryMs = 3000;
 
     public Action<string>? Log;
 
@@ -58,7 +59,19 @@ public sealed class RealDispatcher : IMainThreadDispatcher, IDisposable
     private bool EnsureInstalled()
     {
         if (_ready) return true;
-        lock (_lock) { if (!_installTried) { _installTried = true; Install(); } }
+        lock (_lock)
+        {
+            if (_ready) return true;
+            // RETRY COM COOLDOWN. Antes era UMA tentativa por attach (_installTried, setado e nunca
+            // mais limpo): uma falha transitória — típica logo depois do auto-restart, com o jogo
+            // ainda carregando e a InputManager.Update ainda não escrita — matava auto-box, auto-stash,
+            // auto-fuse e a entrada de estágio pelo RESTO da sessão, calada e sem nenhuma nova tentativa.
+            // O cooldown evita martelar o processo a cada tick de 250ms do AutomationLoop.
+            long now = Environment.TickCount64;
+            if (now < _nextInstallAt) return false;
+            _nextInstallAt = now + InstallRetryMs;
+            Install();
+        }
         return _ready;
     }
 

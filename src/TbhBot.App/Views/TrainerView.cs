@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -81,7 +81,8 @@ public sealed class TrainerView : UserControl
         Unloaded += (_, _) => _timer.Stop();
     }
 
-    private int _reading;   // leituras do tick anterior ainda em voo
+    private int _reading;        // leituras do tick anterior ainda em voo
+    private int _readingStuck;   // ticks seguidos com leitura em voo -- destrava se latchar
 
     /// <summary>
     /// Tick de 1s. As leituras já são assíncronas; o que faltava era NÃO EMPILHAR: quando o engine
@@ -91,7 +92,16 @@ public sealed class TrainerView : UserControl
     /// </summary>
     private void Tick()
     {
-        if (System.Threading.Volatile.Read(ref _reading) > 0) return;   // tick anterior ainda lendo
+        if (System.Threading.Volatile.Read(ref _reading) > 0)           // tick anterior ainda lendo
+        {
+            // REDE DE SEGURANÇA: se algum consumidor sair sem DoneReading(), o contador latcha e este
+            // tick fica MORTO até o painel ser reiniciado — a aba Trainer congela e o PushFuseConfig()
+            // para de re-enviar a config do auto-fuse (que o Attach() recria no default a cada restart
+            // do jogo). Era o que acontecia com o jogo fechado: os 3 consumidores davam return cedo.
+            if (++_readingStuck < 10) return;
+            System.Threading.Interlocked.Exchange(ref _reading, 0);
+        }
+        _readingStuck = 0;
         System.Threading.Interlocked.Exchange(ref _reading, 3);
         RefreshUnlocks();
         ReadStats();
@@ -239,7 +249,7 @@ public sealed class TrainerView : UserControl
 
     private void ReadStats()
     {
-        if (!_svc.IsAttached) return;
+        if (!_svc.IsAttached) { DoneReading(); return; }
         Task.Run(() =>
         {
             Dictionary<string, double> stats;
@@ -319,7 +329,7 @@ public sealed class TrainerView : UserControl
 
     private void ReadStage()
     {
-        if (!_svc.IsAttached) return;
+        if (!_svc.IsAttached) { DoneReading(); return; }
         Task.Run(() =>
         {
             Dictionary<string, int> fields;
@@ -365,7 +375,7 @@ public sealed class TrainerView : UserControl
 
     private void RefreshUnlocks()
     {
-        if (!_svc.IsAttached) { _cubeLabel.Text = "cubo: jogo fechado"; _cubeBtn.IsEnabled = false; return; }
+        if (!_svc.IsAttached) { _cubeLabel.Text = "cubo: jogo fechado"; _cubeBtn.IsEnabled = false; DoneReading(); return; }
         Task.Run(() =>
         {
             int? cube = null;

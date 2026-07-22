@@ -103,8 +103,11 @@ public sealed class Engine : IDisposable
                     }
                 }
             }
+            // A BASE vai no log de propósito: quando o attach pegava a base da sessão anterior, nada
+            // no log denunciava (os offsets carregavam certo, só a base era podre). Com ela impressa,
+            // comparar duas sessões mostra o problema na hora.
             Emit(loaded
-                ? $"build {hash} — offsets prontos"
+                ? $"build {hash} — offsets prontos (GameAssembly @ 0x{Target.ModuleBase:X})"
                 : $"build {hash} desconhecido e sem cache — só reads por AOB (stats/stage/god) funcionam; auto-offset por dump = futuro");
         }
 

@@ -200,6 +200,120 @@ if (args.Contains("--runes-contended"))
 
 // SOMENTE LEITURA: mostra o que está aplicado no jogo agora. Não instala dispatcher nem patcha nada,
 // então é seguro rodar com o painel aberto (serve pra conferir o re-apply depois do auto-restart).
+// ---- papel de "jogo falso": processo chamado TaskBarHero que só carrega o GameAssembly.dll DEPOIS
+// de N segundos. Reproduz a corrida do auto-restart (processo existe, módulo ainda não) sem o jogo.
+if (args.Contains("--fake-game"))
+{
+    int fi = Array.IndexOf(args, "--fake-game");
+    int atraso = fi + 1 < args.Length && int.TryParse(args[fi + 1], out int fd) ? fd : 0;
+    Thread.Sleep(atraso * 1000);
+    try { System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(AppContext.BaseDirectory, "GameAssembly.dll")); }
+    catch (Exception ex) { Console.WriteLine("fake-game: falhei ao carregar o dll: " + ex.Message); return; }
+    Thread.Sleep(Timeout.Infinite);
+    return;
+}
+
+// ---- TESTE DE REGRESSÃO do attach, determinístico e sem o jogo. Monta dois "jogos falsos": o
+// primeiro carrega o módulo na hora (attach tem de dar certo), o segundo só depois de 8s. Attachar
+// nessa janela é EXATAMENTE o que o ConnectLoop faz quando o watchdog reabre o jogo. Se o Attach()
+// devolver true nessa janela, a base é a da sessão ANTERIOR — o bug que matava auto-box/auto-stash.
+if (args.Contains("--attach-regress"))
+{
+    string dir = Path.Combine(Path.GetTempPath(), "tbh_attach_regress");
+    Directory.CreateDirectory(dir);
+    string fakeExe = Path.Combine(dir, "TaskBarHero.exe");
+    string cliDir = AppContext.BaseDirectory;
+    foreach (var f in Directory.GetFiles(cliDir))
+        File.Copy(f, Path.Combine(dir, Path.GetFileName(f)), true);
+    File.Copy(Path.Combine(cliDir, Path.GetFileName(Environment.ProcessPath!)), fakeExe, true);
+    File.Copy(@"C:\Windows\System32\winmm.dll", Path.Combine(dir, "GameAssembly.dll"), true);
+
+    Process Spawn(int atraso) => Process.Start(new ProcessStartInfo(fakeExe, $"--fake-game {atraso}")
+    { WorkingDirectory = dir, UseShellExecute = false, CreateNoWindow = true })!;
+
+    var alvo = new TbhBot.Core.Memory.ProcessTarget();
+    bool bug = false;
+
+    Console.WriteLine("1) jogo falso A (carrega o modulo na hora)");
+    var a = Spawn(0);
+    nint baseA = 0;
+    for (int i = 0; i < 40 && baseA == 0; i++) { Thread.Sleep(250); if (alvo.Attach()) baseA = alvo.ModuleBase; }
+    Console.WriteLine($"   attach em A: base=0x{baseA:X}  {(baseA != 0 ? "OK" : "FALHOU (teste inconclusivo)")}");
+    if (baseA == 0) { try { a.Kill(); } catch { } return; }
+
+    Console.WriteLine("2) mata A e sobe B, que so carrega o modulo depois de 8s");
+    a.Kill(); a.WaitForExit();
+    Thread.Sleep(500);
+    var b = Spawn(8);
+    Thread.Sleep(1500);                               // a janela do bug: processo vivo, modulo ausente
+
+    bool attachOk = alvo.Attach();
+    nint baseJanela = alvo.ModuleBase;
+    Console.WriteLine($"3) attach DENTRO da janela: retorno={attachOk}  base=0x{baseJanela:X}  pid={alvo.ProcessId}");
+    if (attachOk && baseJanela == baseA)
+    {
+        bug = true;
+        Console.WriteLine("   >>> BUG: devolveu TRUE com a base do processo ANTERIOR (0x{0:X})", baseA);
+    }
+    else if (!attachOk && baseJanela == 0)
+        Console.WriteLine($"   >>> CORRETO: recusou o attach (motivo: {alvo.ModuleError})");
+    else
+        Console.WriteLine("   >>> inesperado — inspecionar");
+
+    Console.WriteLine("4) espera o modulo aparecer e re-attacha (o ConnectLoop tenta a cada 1s)");
+    nint baseB = 0;
+    for (int i = 0; i < 40 && baseB == 0; i++) { Thread.Sleep(500); if (alvo.Attach()) baseB = alvo.ModuleBase; }
+    Console.WriteLine($"   base final=0x{baseB:X}  {(baseB != 0 ? "attachou" : "NAO attachou")}");
+
+    try { b.Kill(); } catch { }
+    alvo.Dispose();
+    Console.WriteLine();
+    Console.WriteLine(bug ? "RESULTADO: BUG PRESENTE" : "RESULTADO: SEM O BUG");
+    Environment.ExitCode = bug ? 1 : 0;
+    return;
+}
+
+// REGRESSÃO DO AUTO-RESTART: fica em loop imitando o ConnectLoop do painel (só chama Attach() quando
+// !IsAttached) e imprime, a cada segundo, a base do módulo e a saúde do que depende de Base+RVA.
+// Mate o jogo e reabra durante a execução: a base TEM de mudar para a do processo novo. Se ela ficar
+// congelada na antiga, o attach prematuro voltou — que é o bug que matava auto-box e auto-stash.
+if (args.Contains("--restart-watch"))
+{
+    int segundos = 240;
+    int wi = Array.IndexOf(args, "--restart-watch");
+    if (wi + 1 < args.Length && int.TryParse(args[wi + 1], out int s)) segundos = s;
+
+    var we = new TbhBot.Core.Engine();
+    we.Log += m => Console.WriteLine($"        [engine] {m}");
+    nint basePrev = 0;
+    int pidPrev = 0;
+    Console.WriteLine("hh:mm:ss  pid      base              disp  boxes  ra                 obs");
+    for (int i = 0; i < segundos; i++)
+    {
+        bool viva = we.IsAttached && we.Target.IsAlive();
+        if (!viva) { try { we.Attach(); } catch { } }
+
+        nint b = we.Target.ModuleBase;
+        int pid = we.Target.ProcessId;
+        string disp = "-", boxes = "-", ra = "-", obs = "";
+
+        if (we.IsAttached && we.Target.IsAlive())
+        {
+            try { disp = we.Dispatcher.IsReady ? "ok" : "não"; } catch { disp = "err"; }
+            try { boxes = we.AutoBox.FindStageBoxes().Count.ToString(); } catch { boxes = "err"; }
+            try { nint r = we.AutoStash.ResolveRa(); ra = r == 0 ? "0 (FALHOU)" : $"0x{r:X}"; } catch { ra = "err"; }
+        }
+        else obs = we.Target.ModuleError ?? "sem jogo";
+
+        if (pid != pidPrev && pid != 0) { obs += $"  <<< PROCESSO NOVO (era {pidPrev})"; pidPrev = pid; }
+        if (b != basePrev) { obs += $"  <<< BASE MUDOU (era 0x{basePrev:X})"; basePrev = b; }
+
+        Console.WriteLine($"{DateTime.Now:HH:mm:ss}  {pid,-7}  0x{b:X12}  {disp,-4}  {boxes,-5}  {ra,-17}  {obs}");
+        System.Threading.Thread.Sleep(1000);
+    }
+    return;
+}
+
 // SÓ LEITURA: compara a resolução NOVA do godmode (busca pela cauda, aceita 57/C3) com a ANTIGA
 // (padrão inteiro, exige 57). Com o cheat ligado elas divergem — e patchar a antiga era o "godmode 2x".
 if (args.Contains("--godsite"))
